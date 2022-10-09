@@ -28,6 +28,11 @@ static struct list ready_list;
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
+/* List of processes in THREAD_BLOCKED state and with blocked ticks, 
+   that is, processes that are blocked by I/O or other events. And 
+   blocked list is always sorted by blocked_ticks. */
+static struct list blocked_list;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -70,6 +75,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+static void insert_blocked_list (struct thread *);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -92,6 +98,9 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+
+  /* Set up information for blocking list. */
+  list_init (&blocked_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -220,6 +229,54 @@ thread_block (void)
   schedule ();
 }
 
+/* Puts the current thread to sleep with blocking ticks.
+   It will be scheduled again until blocking ticks elapsed.
+
+   This function must be called with interrupts turned off. */
+void 
+thread_block_with_ticks (int64_t blocked_ticks)
+{
+    struct thread *t;
+    ASSERT (!intr_context ());
+    ASSERT (intr_get_level () == INTR_OFF);
+
+    t = thread_current ();
+    t -> status = THREAD_BLOCKED;
+    t -> block_ticks = blocked_ticks;
+
+    insert_blocked_list(t);
+    schedule ();
+}
+
+/* This function will only be called by thread_block_with_ticks.
+   inserting_t which must equal to thread_current() will be inserted
+   into blocked_list with the order maintained. Complexity is O(n).
+   This function must be called with interrupts turned off. */
+static void 
+insert_blocked_list (struct thread *inserting_t) {
+    struct list_elem *e;
+
+    ASSERT (intr_get_level () == INTR_OFF);
+    
+    if (list_empty (&blocked_list)) 
+    {
+        list_push_front(&blocked_list, &inserting_t->blocked_elem);
+    } 
+    else 
+    {
+        for (e = list_begin (&blocked_list); e != list_end (&blocked_list); e = list_next (e))
+        {
+            struct thread *t = list_entry (e, struct thread, blocked_elem);
+            if (t->block_ticks >= inserting_t->block_ticks) 
+            {
+                list_insert(e, &inserting_t->blocked_elem);
+                return;
+            }
+        }
+        list_push_back(&blocked_list, &inserting_t->blocked_elem);
+    }
+}
+
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -240,6 +297,33 @@ thread_unblock (struct thread *t)
   list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
+}
+
+/* Called by the timer interrupt handler at each timer tick.
+   Thus, this function runs in an external interrupt context.
+   This function will check blocked_list and pop threads whose
+   blocked_ticks is not greater than ticks. 
+   This function must be called with interrupts turned off. */
+void
+thread_unblock_check(int64_t ticks) 
+{
+    struct list_elem *e;
+    struct thread *t;
+    
+    while (!list_empty(&blocked_list)) 
+    {
+        e = list_front (&blocked_list);
+        t = list_entry (e, struct thread, blocked_elem);
+        if (t->block_ticks <= ticks)
+        {
+            list_pop_front(&blocked_list);
+            thread_unblock(t);
+        } 
+        else 
+        {
+            break;
+        }
+    }
 }
 
 /* Returns the name of the running thread. */
