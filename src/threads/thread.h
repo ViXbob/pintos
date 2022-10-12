@@ -25,6 +25,8 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
 
+#define clamp_pri(pri) ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -158,5 +160,8 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+void thread_update_load_avg (void);
+void thread_update_recent_cpu (struct thread *t, void *aux);
+void thread_update_priority (struct thread *t);
 
 #endif /* threads/thread.h */
