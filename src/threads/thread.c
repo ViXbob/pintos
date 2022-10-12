@@ -404,15 +404,6 @@ thread_yield (void)
 
   old_level = intr_disable ();
 
-  // if (!thread_mlfqs)
-  // {
-  //   if (cur->priority
-  //       > list_entry (list_max (&ready_list, thread_cmp_priority, NULL),
-  //                     struct thread, elem)
-  //             ->priority)
-  //     return;
-  // }
-
   if (cur != idle_thread)
     list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
@@ -437,7 +428,7 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
-/* For elem. */
+/* Comparing funtion thread priority for lists holding elem. */
 bool
 thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
                      void *aux UNUSED)
@@ -446,7 +437,7 @@ thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
          < list_entry (b, struct thread, elem)->priority;
 }
 
-/* For donate_elem. */
+/* Comparing funtion thread priority for lists holding donate_elem. */
 bool
 donate_thread_cmp_priority (const struct list_elem *a,
                             const struct list_elem *b, void *aux UNUSED)
@@ -489,14 +480,22 @@ thread_set_priority (int new_priority)
 int
 thread_get_priority (void)
 {
-  ASSERT (!thread_mlfqs);
-  return thread_current ()->priority;
+  if (thread_mlfqs)
+    return clamp_pri (FP_ROUND_TO_NEAREASET (
+        FP_INT_TO_FP (PRI_MAX)
+        - FP_DIV_MIXED (thread_current ()->recent_cpu, 4)
+        - FP_MUL_MIXED (FP_INT_TO_FP (thread_current ()->nice), 2)));
+  else
+    return thread_current ()->priority;
 }
 
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice)
 {
+  /* You should call this function with mlfqs mode disabled. */
+  ASSERT (thread_mlfqs);
+
   thread_current ()->nice = nice;
   thread_update_priority (thread_current ());
   thread_yield ();
@@ -506,6 +505,8 @@ thread_set_nice (int nice)
 int
 thread_get_nice (void)
 {
+  /* You should call this function with mlfqs mode disabled. */
+  ASSERT (thread_mlfqs);
   return thread_current ()->nice;
 }
 
@@ -513,6 +514,8 @@ thread_get_nice (void)
 int
 thread_get_load_avg (void)
 {
+  /* You should call this function with mlfqs mode disabled. */
+  ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (FP_MUL_MIXED (load_avg, 100));
 }
 
@@ -520,6 +523,8 @@ thread_get_load_avg (void)
 int
 thread_get_recent_cpu (void)
 {
+  /* You should call this function with mlfqs mode disabled. */
+  ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (
       FP_MUL_MIXED (thread_current ()->recent_cpu, 100));
 }
@@ -638,11 +643,10 @@ alloc_frame (struct thread *t, size_t size)
   return t->stack;
 }
 
-/* Chooses and returns the next thread to be scheduled.  Should
-   return a thread from the run queue, unless the run queue is
-   empty.  (If the running thread can continue running, then it
-   will be in the run queue.)  If the run queue is empty, return
-   idle_thread. */
+/* Chooses and returns the next thread whose priority is the hightest to be
+   scheduled.  Should return a thread from the run queue, unless the run queue
+   is empty.  (If the running thread can continue running, then it will be in
+   the run queue.)  If the run queue is empty, return idle_thread. */
 static struct thread *
 next_thread_to_run (void)
 {
@@ -770,7 +774,7 @@ thread_update_recent_cpu (struct thread *t, void *aux UNUSED)
     }
 }
 
-/* Get the number of ready threads. */
+/* Get the number of ready threads. Complexity is O(n). */
 int
 ready_threads (void)
 {
