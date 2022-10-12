@@ -54,6 +54,7 @@ struct kernel_thread_frame
 static long long idle_ticks;   /* # of timer ticks spent idle. */
 static long long kernel_ticks; /* # of timer ticks in kernel threads. */
 static long long user_ticks;   /* # of timer ticks in user programs. */
+static fp load_avg;
 
 /* Scheduling. */
 #define TIME_SLICE 4          /* # of timer ticks to give each thread. */
@@ -101,6 +102,9 @@ thread_init (void)
 
   /* Set up information for blocking list. */
   list_init (&blocked_list);
+
+  /* Set load_avg to zero. */
+  load_avg = 0;
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -449,6 +453,9 @@ thread_set_priority (int new_priority)
   int max_priority;
   enum intr_level old_level;
 
+  /* You should not change priority manually in mlfqs mode. */
+  ASSERT (!thread_mlfqs);
+
   old_level = intr_disable ();
   thread_current ()->origin_priority = new_priority;
 
@@ -473,7 +480,13 @@ thread_set_priority (int new_priority)
 int
 thread_get_priority (void)
 {
-  return thread_current ()->priority;
+  if (thread_mlfqs)
+    return FP_ROUND_TO_NEARESET (
+        FP_INT_TO_FP (PRI_MAX)
+        - FP_DIV_MIXED (thread_current ()->recent_cpu, 4)
+        - FP_MUL_MIXED (thread_current ()->nice, 2));
+  else
+    return thread_current ()->priority;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -597,6 +610,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
   list_init (&t->donate_list);
   t->holder = NULL;
+  t->recent_cpu = 0;
+  t->nice = 0;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
