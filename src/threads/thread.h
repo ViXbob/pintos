@@ -103,6 +103,11 @@ struct thread
 
     int64_t block_ticks;                /* Blocked ticks. */
     struct list_elem blocked_elem;      /* List element for blocked list. */
+    struct list donate_list;
+    struct list_elem donate_elem;
+    int origin_priority;
+    struct list_elem lock_donate_elem;
+    struct thread *holder;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -137,6 +142,8 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+bool thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool donate_thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
