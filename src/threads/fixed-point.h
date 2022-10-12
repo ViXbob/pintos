@@ -14,9 +14,9 @@ typedef int fp;
 #define FP_ROUND_TO_ZERO(x) ((x) >> FP_Q)
 
 /* Convert fixed point x to integer (round to nearest integer). */
-#define FP_ROUND_TO_NEARESET(x)                                               \
-  ((x) >= 0 ? ((x + (1 << (FP_Q >> 1))) >> FP_Q)                              \
-            : ((x - (1 << (FP_Q >> 1))) >> FP_Q))
+#define FP_ROUND_TO_NEAREASET(x)                                               \
+  ((x) >= 0 ? (((x) + (1 << (FP_Q - 1))) >> FP_Q)                              \
+            : (((x) - (1 << (FP_Q - 1))) >> FP_Q))
 
 /* Add two fixed point x and y. */
 #define FP_ADD(x, y) ((x) + (y))
@@ -37,7 +37,7 @@ typedef int fp;
 #define FP_MUL_MIXED(x, n) ((x) * (n))
 
 /* Divide two fixed point x by y. */
-#define FP_DIV(x, y) ((fp)((((int64_t) x) >> FP_Q) / y))
+#define FP_DIV(x, y) ((fp)((((int64_t) x) << FP_Q) / y))
 
 /* Divide fixed point x by integer n. */
 #define FP_DIV_MIXED(x, n) ((x) / (n))
