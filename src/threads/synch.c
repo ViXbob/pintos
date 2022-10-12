@@ -34,6 +34,7 @@
 
 static void lock_sema_down_with_donate (struct lock *lock);
 static void remove_donate_thread (struct semaphore *sema, struct list *donator_list); 
+static bool condvar_cmp_pri (const struct list_elem *a, const struct list_elem *b, void *aux);
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
@@ -281,16 +282,16 @@ void
 remove_donate_thread (struct semaphore *sema, struct list *donator_list) 
 {
     enum intr_level old_level;
-    struct list_elem *e, *v;
+    struct list_elem *e;
 
     ASSERT (sema != NULL);
     ASSERT (!list_empty (&sema->waiters));
 
     old_level = intr_disable ();
 
-    for (v = list_begin (donator_list); v != list_end(donator_list); v = list_next (v)) 
+    for (e = list_begin (donator_list); e != list_end(donator_list); e = list_next (e)) 
     {
-        struct thread *target_thread = list_entry(v, struct thread, lock_donate_elem);
+        struct thread *target_thread = list_entry(e, struct thread, lock_donate_elem);
         list_remove (&target_thread->donate_elem);
         target_thread->holder = NULL;
     }
@@ -410,6 +411,16 @@ cond_wait (struct condition *cond, struct lock *lock)
   lock_acquire (lock);
 }
 
+bool 
+condvar_cmp_pri (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) 
+{
+    struct semaphore *sema_a, *sema_b;
+    sema_a = &list_entry (a, struct semaphore_elem, elem)->semaphore;
+    sema_b = &list_entry (b, struct semaphore_elem, elem)->semaphore;
+    return list_entry (list_max(&sema_a->waiters, thread_cmp_priority, NULL), struct thread, elem)->priority < 
+           list_entry (list_max(&sema_b->waiters, thread_cmp_priority, NULL), struct thread, elem)->priority;
+}
+
 /* If any threads are waiting on COND (protected by LOCK), then
    this function signals one of them to wake up from its wait.
    LOCK must be held before calling this function.
@@ -420,14 +431,18 @@ cond_wait (struct condition *cond, struct lock *lock)
 void
 cond_signal (struct condition *cond, struct lock *lock UNUSED) 
 {
-  ASSERT (cond != NULL);
-  ASSERT (lock != NULL);
-  ASSERT (!intr_context ());
-  ASSERT (lock_held_by_current_thread (lock));
+    struct list_elem *e;
+    ASSERT (cond != NULL);
+    ASSERT (lock != NULL);
+    ASSERT (!intr_context ());
+    ASSERT (lock_held_by_current_thread (lock));
 
-  if (!list_empty (&cond->waiters)) 
-    sema_up (&list_entry (list_pop_front (&cond->waiters),
-                          struct semaphore_elem, elem)->semaphore);
+    if (!list_empty (&cond->waiters)) 
+    {
+        e = list_max (&cond->waiters, condvar_cmp_pri, NULL);
+        list_remove(e);
+        sema_up (&list_entry (e, struct semaphore_elem, elem)->semaphore);
+    }
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
