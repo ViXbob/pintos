@@ -180,6 +180,18 @@ timer_interrupt (struct intr_frame *args UNUSED)
   ticks++;
   enum intr_level old_level = intr_disable ();
   thread_unblock_check (ticks);
+
+  if (thread_mlfqs)
+    {
+      thread_current ()->recent_cpu
+          = FP_ADD (thread_current ()->recent_cpu, FP_INT_TO_FP (1));
+      if (ticks % TIMER_FREQ == 0)
+        {
+          thread_update_load_avg ();
+          thread_foreach (thread_update_recent_cpu, NULL);
+        }
+      thread_update_priority (thread_current ());
+    }
   intr_set_level (old_level);
   thread_tick ();
 }
