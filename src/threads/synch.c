@@ -32,6 +32,9 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+static void lock_sema_down_with_donate (struct lock *lock);
+static void remove_donate_thread (struct semaphore *sema, struct list *donator_list); 
+
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -108,16 +111,25 @@ sema_try_down (struct semaphore *sema)
 void
 sema_up (struct semaphore *sema) 
 {
-  enum intr_level old_level;
+    struct list_elem *e;
+    enum intr_level old_level;
+    bool flag = false;
 
-  ASSERT (sema != NULL);
+    ASSERT (sema != NULL);
 
-  old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
-  sema->value++;
-  intr_set_level (old_level);
+    old_level = intr_disable ();
+    if (!list_empty (&sema->waiters)) 
+    {
+        e = list_max(&sema->waiters, thread_cmp_priority, NULL);
+        list_remove(e);
+        thread_unblock (list_entry (e, struct thread, elem));
+        flag = true;
+    }
+
+    sema->value++;
+    intr_set_level (old_level);
+    if (flag) 
+        thread_yield ();
 }
 
 static void sema_test_helper (void *sema_);
@@ -179,6 +191,41 @@ lock_init (struct lock *lock)
 
   lock->holder = NULL;
   sema_init (&lock->semaphore, 1);
+  list_init(&lock->donator_list);
+}
+
+void
+lock_sema_down_with_donate(struct lock *lock)
+{
+    struct semaphore *sema;
+    enum intr_level old_level;
+    struct thread *parent_holder, *thread;
+    
+    sema = &lock->semaphore;
+
+    ASSERT (sema != NULL);
+    ASSERT (!intr_context ());
+    ASSERT (sema->value == 0);
+    // ASSERT (PRI_MIN <= thread_get_priority() + 1 && thread_get_priority() + 1 <= PRI_MAX);
+
+    old_level = intr_disable ();
+
+    thread_current ()->holder = lock->holder;
+    list_push_back (&lock->donator_list, &thread_current ()->lock_donate_elem);
+    list_push_back (&lock->holder->donate_list, &thread_current ()->donate_elem);
+    // lock->holder->priority = list_entry(list_max (&lock->holder->donate_list, thread_cmp_priority, NULL), struct thread, donate_elem)->priority;
+    thread = thread_current ();
+    parent_holder = thread -> holder;
+    while (parent_holder != NULL)
+    {
+        parent_holder->priority = (parent_holder->priority < thread->priority ? thread->priority : parent_holder->priority);
+        thread = parent_holder;
+        parent_holder = thread->holder;
+    }
+
+    sema_down(sema);
+
+    intr_set_level (old_level);
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -192,12 +239,22 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
-  ASSERT (lock != NULL);
-  ASSERT (!intr_context ());
-  ASSERT (!lock_held_by_current_thread (lock));
+    ASSERT (lock != NULL);
+    ASSERT (!intr_context ());
+    ASSERT (!lock_held_by_current_thread (lock));
 
-  sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+    // sema_down (&lock->semaphore);
+    // lock->holder = thread_current ();
+    if (lock->holder == NULL) {
+        sema_down (&lock->semaphore);
+        lock->holder = thread_current ();
+    }
+    else 
+    {
+        lock_sema_down_with_donate (lock);
+        lock->holder = thread_current ();
+        list_init (&lock->donator_list);
+    }
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -220,6 +277,27 @@ lock_try_acquire (struct lock *lock)
   return success;
 }
 
+void
+remove_donate_thread (struct semaphore *sema, struct list *donator_list) 
+{
+    enum intr_level old_level;
+    struct list_elem *e, *v;
+
+    ASSERT (sema != NULL);
+    ASSERT (!list_empty (&sema->waiters));
+
+    old_level = intr_disable ();
+
+    for (v = list_begin (donator_list); v != list_end(donator_list); v = list_next (v)) 
+    {
+        struct thread *target_thread = list_entry(v, struct thread, lock_donate_elem);
+        list_remove (&target_thread->donate_elem);
+        target_thread->holder = NULL;
+    }
+
+    intr_set_level (old_level);
+}
+
 /* Releases LOCK, which must be owned by the current thread.
 
    An interrupt handler cannot acquire a lock, so it does not
@@ -228,11 +306,42 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
-  ASSERT (lock != NULL);
-  ASSERT (lock_held_by_current_thread (lock));
+    struct thread *parent_holder, *thread;
+    int new_thread_priority;
+    ASSERT (lock != NULL);
+    ASSERT (lock_held_by_current_thread (lock));
 
-  lock->holder = NULL;
-  sema_up (&lock->semaphore);
+    if (list_empty (&lock->donator_list)) 
+    {
+        lock->holder = NULL;
+        sema_up (&lock->semaphore);
+    }
+    else 
+    {
+        lock->holder = NULL;
+        
+        remove_donate_thread (&lock->semaphore, &lock->donator_list);
+        list_init (&lock->donator_list);
+
+        if (list_empty(&thread_current ()->donate_list))
+            new_thread_priority = thread_current ()->origin_priority;
+        else 
+            new_thread_priority = list_entry(list_max (&thread_current ()->donate_list, donate_thread_cmp_priority, NULL), struct thread, donate_elem)->priority;
+
+        thread = thread_current ();
+        parent_holder = thread->holder;
+
+        thread->priority = new_thread_priority;
+
+        while (parent_holder != NULL) 
+        {
+            parent_holder->priority = list_entry(list_max (&parent_holder->donate_list, donate_thread_cmp_priority, NULL), struct thread, donate_elem)->priority;
+            thread = parent_holder;
+            parent_holder = thread->holder;
+        }
+
+        sema_up (&lock->semaphore);
+    }
 }
 
 /* Returns true if the current thread holds LOCK, false
