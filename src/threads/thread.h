@@ -25,6 +25,7 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
 
+/* Clamp priority into [PRIMIN, PRIMAX]. */
 #define clamp_pri(pri) ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
 
 /* A kernel thread or user process.
@@ -156,6 +157,7 @@ bool thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
 bool donate_thread_cmp_priority (const struct list_elem *a,
                                  const struct list_elem *b, void *aux);
 
+/* Function for mlfqs mode. */
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
