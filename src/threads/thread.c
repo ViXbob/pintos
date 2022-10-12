@@ -210,6 +210,8 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  thread_yield();
+
   return tid;
 }
 
@@ -391,6 +393,8 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
+  if (cur->priority > list_entry(list_max(&ready_list, thread_cmp_priority, NULL), struct thread, elem)->priority) 
+    return;
   if (cur != idle_thread) 
     list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
@@ -415,11 +419,39 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
+/* For elem. */
+bool 
+thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  return list_entry (a, struct thread, elem)->priority < list_entry (b, struct thread, elem)->priority;
+}
+
+/* For donate_elem. */
+bool 
+donate_thread_cmp_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  return list_entry (a, struct thread, donate_elem)->priority < list_entry (b, struct thread, donate_elem)->priority;
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+    int max_priority;
+    enum intr_level old_level;
+
+    old_level = intr_disable();
+    thread_current ()->origin_priority = new_priority;
+
+    if (!list_empty (&thread_current ()->donate_list))
+        max_priority = list_entry(list_max (&thread_current ()->donate_list, donate_thread_cmp_priority, NULL), struct thread, donate_elem)->priority;
+    else 
+        max_priority = PRI_MIN;
+
+    thread_current ()->priority = (max_priority > thread_current ()->origin_priority ? max_priority : thread_current ()->origin_priority);
+
+    thread_yield();
+    intr_set_level(old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -546,7 +578,10 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->origin_priority = priority;
   t->magic = THREAD_MAGIC;
+  list_init(&t->donate_list);
+  t->holder = NULL;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -574,10 +609,15 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
-    return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    struct list_elem* e;
+    if (list_empty (&ready_list))
+        return idle_thread;
+    else {
+        e = list_max(&ready_list, thread_cmp_priority, NULL);
+        list_remove(e);
+        return list_entry(e, struct thread, elem);
+    }
+    // list_entry (list_pop_front (&ready_list), struct thread, elem);
 }
 
 /* Completes a thread switch by activating the new thread's page
