@@ -1,6 +1,7 @@
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
+#include "threads/fixed-point.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -103,11 +104,17 @@ struct thread
 
   int64_t block_ticks;           /* Blocked ticks. */
   struct list_elem blocked_elem; /* List element for blocked list. */
-  struct list donate_list;
-  struct list_elem donate_elem;
-  int origin_priority;
-  struct list_elem lock_donate_elem;
-  struct thread *holder;
+
+  /* For priority donate. */
+  struct list donate_list;           /* List for donator threads. */
+  struct list_elem donate_elem;      /* List element for donate_list. */
+  struct list_elem lock_donate_elem; /* List element for lock_donate_list. */
+  struct thread *holder;             /* The thread current thread donate to. */
+  int origin_priority;               /* Origin priority for priority donate. */
+
+  /* For multilevel feedback queue scheduler. */
+  fp recent_cpu; /* How much CPU time each process has received "recently". */
+  int nice; /* Nice value that determines how "nice" the thread should be. */
 };
 
 /* If false (default), use round-robin scheduler.
