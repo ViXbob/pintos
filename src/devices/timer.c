@@ -188,7 +188,10 @@ timer_interrupt (struct intr_frame *args UNUSED)
           thread_update_load_avg ();
           thread_foreach (thread_update_recent_cpu, NULL);
         }
-      thread_update_priority (thread_current ());
+      else if (ticks % 4 == 0)
+        {
+          thread_foreach (thread_update_priority, NULL);
+        }
     }
   intr_set_level (old_level);
   thread_tick ();
