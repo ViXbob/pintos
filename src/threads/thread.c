@@ -497,7 +497,7 @@ thread_set_nice (int nice)
   ASSERT (thread_mlfqs);
 
   thread_current ()->nice = nice;
-  thread_update_priority (thread_current ());
+  thread_update_priority (thread_current (), NULL);
   thread_yield ();
 }
 
@@ -615,7 +615,7 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *)t + PGSIZE;
   if (thread_mlfqs)
-    thread_update_priority (t);
+    thread_update_priority (t, NULL);
   else
     t->priority = priority;
   t->origin_priority = priority;
@@ -770,7 +770,7 @@ thread_update_recent_cpu (struct thread *t, void *aux UNUSED)
                     FP_ADD (FP_MUL_MIXED (load_avg, 2), FP_INT_TO_FP (1)));
       t->recent_cpu
           = FP_ADD (FP_MUL (coeff, t->recent_cpu), FP_INT_TO_FP (t->nice));
-      thread_update_priority (t);
+      thread_update_priority (t, NULL);
     }
 }
 
@@ -783,10 +783,13 @@ ready_threads (void)
 
 /* Update thread t's priority. */
 void
-thread_update_priority (struct thread *t)
+thread_update_priority (struct thread *t, void *aux UNUSED)
 {
   ASSERT (thread_mlfqs);
-  t->priority = clamp_pri (FP_ROUND_TO_NEAREASET (
-      FP_INT_TO_FP (PRI_MAX) - FP_DIV_MIXED (t->recent_cpu, 4)
-      - FP_MUL_MIXED (FP_INT_TO_FP (t->nice), 2)));
+  if (t != idle_thread)
+    {
+      t->priority = clamp_pri (FP_ROUND_TO_NEAREASET (
+          FP_INT_TO_FP (PRI_MAX) - FP_DIV_MIXED (t->recent_cpu, 4)
+          - FP_MUL_MIXED (FP_INT_TO_FP (t->nice), 2)));
+    }
 }
