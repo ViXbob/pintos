@@ -316,8 +316,6 @@ remove_donate_thread (struct semaphore *sema, struct list *donator_list)
 void
 lock_release (struct lock *lock)
 {
-  struct thread *parent_holder, *thread;
-  int new_thread_priority;
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
@@ -330,33 +328,19 @@ lock_release (struct lock *lock)
     {
       lock->holder = NULL;
 
+      ASSERT (thread_current ()->holder == NULL);
+
       remove_donate_thread (&lock->semaphore, &lock->donator_list);
       list_init (&lock->donator_list);
 
       if (list_empty (&thread_current ()->donate_list))
-        new_thread_priority = thread_current ()->origin_priority;
+        thread_current ()->priority = thread_current ()->origin_priority;
       else
-        new_thread_priority
+        thread_current ()->priority
             = list_entry (list_max (&thread_current ()->donate_list,
                                     donate_thread_cmp_priority, NULL),
                           struct thread, donate_elem)
                   ->priority;
-
-      thread = thread_current ();
-      parent_holder = thread->holder;
-
-      thread->priority = new_thread_priority;
-
-      while (parent_holder != NULL)
-        {
-          parent_holder->priority
-              = list_entry (list_max (&parent_holder->donate_list,
-                                      donate_thread_cmp_priority, NULL),
-                            struct thread, donate_elem)
-                    ->priority;
-          thread = parent_holder;
-          parent_holder = thread->holder;
-        }
 
       sema_up (&lock->semaphore);
     }
