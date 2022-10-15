@@ -1,28 +1,32 @@
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
+#include "threads/fixed-point.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
-  {
-    THREAD_RUNNING,     /* Running thread. */
-    THREAD_READY,       /* Not running but ready to run. */
-    THREAD_BLOCKED,     /* Waiting for an event to trigger. */
-    THREAD_DYING        /* About to be destroyed. */
-  };
+{
+  THREAD_RUNNING, /* Running thread. */
+  THREAD_READY,   /* Not running but ready to run. */
+  THREAD_BLOCKED, /* Waiting for an event to trigger. */
+  THREAD_DYING    /* About to be destroyed. */
+};
 
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
+#define TID_ERROR ((tid_t)-1) /* Error value for tid_t. */
 
 /* Thread priorities. */
-#define PRI_MIN 0                       /* Lowest priority. */
-#define PRI_DEFAULT 31                  /* Default priority. */
-#define PRI_MAX 63                      /* Highest priority. */
+#define PRI_MIN 0      /* Lowest priority. */
+#define PRI_DEFAULT 31 /* Default priority. */
+#define PRI_MAX 63     /* Highest priority. */
+
+/* Clamp priority into [PRIMIN, PRIMAX]. */
+#define clamp_pri(pri) ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
 
 /* A kernel thread or user process.
 
@@ -81,29 +85,40 @@ typedef int tid_t;
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
 struct thread
-  {
-    /* Owned by thread.c. */
-    tid_t tid;                          /* Thread identifier. */
-    enum thread_status status;          /* Thread state. */
-    char name[16];                      /* Name (for debugging purposes). */
-    uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list. */
+{
+  /* Owned by thread.c. */
+  tid_t tid;                 /* Thread identifier. */
+  enum thread_status status; /* Thread state. */
+  char name[16];             /* Name (for debugging purposes). */
+  uint8_t *stack;            /* Saved stack pointer. */
+  int priority;              /* Priority. */
+  struct list_elem allelem;  /* List element for all threads list. */
 
-    /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
+  /* Shared between thread.c and synch.c. */
+  struct list_elem elem; /* List element. */
 
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /* Page directory. */
+  /* Owned by userprog/process.c. */
+  uint32_t *pagedir; /* Page directory. */
 #endif
 
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
+  /* Owned by thread.c. */
+  unsigned magic; /* Detects stack overflow. */
 
-    int64_t block_ticks;                /* Blocked ticks. */
-    struct list_elem blocked_elem;      /* List element for blocked list. */
-  };
+  int64_t block_ticks;           /* Blocked ticks. */
+  struct list_elem blocked_elem; /* List element for blocked list. */
+
+  /* For priority donate. */
+  struct list donate_list;           /* List for donator threads. */
+  struct list_elem donate_elem;      /* List element for donate_list. */
+  struct list_elem lock_donate_elem; /* List element for lock_donate_list. */
+  struct thread *holder;             /* The thread current thread donate to. */
+  int origin_priority;               /* Origin priority for priority donate. */
+
+  /* For multilevel feedback queue scheduler. */
+  fp recent_cpu; /* How much CPU time each process has received "recently". */
+  int nice; /* Nice value that determines how "nice" the thread should be. */
+};
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -137,10 +152,18 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+bool thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
+                          void *aux);
+bool donate_thread_cmp_priority (const struct list_elem *a,
+                                 const struct list_elem *b, void *aux);
 
+/* Function for mlfqs mode. */
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+void thread_update_load_avg (void);
+void thread_update_recent_cpu (struct thread *t, void *aux);
+void thread_update_priority (struct thread *t, void *aux);
 
 #endif /* threads/thread.h */
