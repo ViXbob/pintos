@@ -102,9 +102,6 @@ struct thread
   uint32_t *pagedir; /* Page directory. */
 #endif
 
-  /* Owned by thread.c. */
-  unsigned magic; /* Detects stack overflow. */
-
   int64_t block_ticks;           /* Blocked ticks. */
   struct list_elem blocked_elem; /* List element for blocked list. */
 
@@ -118,6 +115,9 @@ struct thread
   /* For multilevel feedback queue scheduler. */
   fp recent_cpu; /* How much CPU time each process has received "recently". */
   int nice; /* Nice value that determines how "nice" the thread should be. */
+
+  /* Owned by thread.c. */
+  unsigned magic; /* Detects stack overflow. */
 };
 
 /* If false (default), use round-robin scheduler.
