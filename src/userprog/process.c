@@ -8,6 +8,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
@@ -40,23 +41,35 @@ parse_parameter (char *str, int *argc, char **argv)
     }
 }
 
+struct para_passing
+  {
+    char *fn_copy;
+    struct semaphore *sema;
+  };
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
 process_execute (const char *file_name)
-{
-  char *fn_copy;
+{ 
+  struct para_passing para_passing;
+  struct semaphore sema;
   tid_t tid;
+
+  /* Initialize lock. */
+  sema_init(&sema, 1);
+  para_passing.sema = &sema;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  para_passing.fn_copy = palloc_get_page (0);
+  if (para_passing.fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
-
+  strlcpy (para_passing.fn_copy, file_name, PGSIZE);
+  
+  /* Get process name. */
   char *para_copy;
   char *process_name;
   para_copy = palloc_get_page (0);
@@ -66,22 +79,25 @@ process_execute (const char *file_name)
   char *str = para_copy;
   process_name = strtok_r (str, " ", &str);
 
+  sema_down(para_passing.sema);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (process_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (process_name, PRI_DEFAULT, start_process, &para_passing);
 
   palloc_free_page (para_copy);
 
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy);
+  sema_down(para_passing.sema);
+  // if (tid == TID_ERROR)
+  palloc_free_page (para_passing.fn_copy);
+  sema_up(para_passing.sema);
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *para_passing_)
 {
-  char *file_name = file_name_;
+  struct para_passing *para_passing = para_passing_;
   struct intr_frame if_;
   bool success;
 
@@ -93,7 +109,7 @@ start_process (void *file_name_)
 
   char *argv[MAX_PARAMETER] = {NULL};
   int argc = 0;
-  parse_parameter (file_name, &argc, (char **)&argv);
+  parse_parameter (para_passing->fn_copy, &argc, (char **)&argv);
 
   ASSERT (argc > 0);
 
@@ -145,8 +161,10 @@ start_process (void *file_name_)
   if_.esp -= sizeof(func_ptr_type);
   *(func_ptr_type *)if_.esp = NULL;
 
+  // palloc_free_page (para_passing->fn_copy);
+  sema_up(para_passing->sema);
+
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success)
     thread_exit ();
 
