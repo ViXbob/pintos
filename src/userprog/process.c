@@ -82,11 +82,12 @@ process_execute (const char *file_name)
   sema_down(para_passing.sema);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (process_name, PRI_DEFAULT, start_process, &para_passing);
+  if (tid == TID_ERROR)
+    sema_up(para_passing.sema);
 
   palloc_free_page (para_copy);
 
   sema_down(para_passing.sema);
-  // if (tid == TID_ERROR)
   palloc_free_page (para_passing.fn_copy);
   sema_up(para_passing.sema);
   return tid;
