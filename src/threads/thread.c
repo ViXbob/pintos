@@ -455,6 +455,7 @@ thread_set_priority (int new_priority)
 
   /* You should not change priority manually in mlfqs mode. */
   ASSERT (!thread_mlfqs);
+  ASSERT (!intr_context ());
 
   old_level = intr_disable ();
   thread_current ()->origin_priority = new_priority;
