@@ -17,3 +17,6 @@ lineup
 matmult
 recursor
 *.d
+*.out
+*.a
+*.o
