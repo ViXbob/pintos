@@ -6,9 +6,9 @@
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
+#include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#include "threads/synch.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
@@ -42,10 +42,10 @@ parse_parameter (char *str, int *argc, char **argv)
 }
 
 struct para_passing
-  {
-    char *fn_copy;
-    struct semaphore *sema;
-  };
+{
+  char *fn_copy;
+  struct semaphore *sema;
+};
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -53,13 +53,13 @@ struct para_passing
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
 process_execute (const char *file_name)
-{ 
+{
   struct para_passing para_passing;
   struct semaphore sema;
   tid_t tid;
 
   /* Initialize lock. */
-  sema_init(&sema, 1);
+  sema_init (&sema, 1);
   para_passing.sema = &sema;
 
   /* Make a copy of FILE_NAME.
@@ -68,7 +68,7 @@ process_execute (const char *file_name)
   if (para_passing.fn_copy == NULL)
     return TID_ERROR;
   strlcpy (para_passing.fn_copy, file_name, PGSIZE);
-  
+
   /* Get process name. */
   char *para_copy;
   char *process_name;
@@ -79,17 +79,18 @@ process_execute (const char *file_name)
   char *str = para_copy;
   process_name = strtok_r (str, " ", &str);
 
-  sema_down(para_passing.sema);
+  sema_down (para_passing.sema);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (process_name, PRI_DEFAULT, start_process, &para_passing);
+  tid = thread_create (process_name, PRI_DEFAULT, start_process,
+                       &para_passing);
   if (tid == TID_ERROR)
-    sema_up(para_passing.sema);
+    sema_up (para_passing.sema);
 
   palloc_free_page (para_copy);
 
-  sema_down(para_passing.sema);
+  sema_down (para_passing.sema);
   palloc_free_page (para_passing.fn_copy);
-  sema_up(para_passing.sema);
+  sema_up (para_passing.sema);
   return tid;
 }
 
@@ -108,7 +109,7 @@ start_process (void *para_passing_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  char *argv[MAX_PARAMETER] = {NULL};
+  char *argv[MAX_PARAMETER] = { NULL };
   int argc = 0;
   parse_parameter (para_passing->fn_copy, &argc, (char **)&argv);
 
@@ -136,34 +137,34 @@ start_process (void *para_passing_)
     }
 
   // push argument pointers into stack
-  ASSERT (sizeof(char*) == WORD_BYTE);
+  ASSERT (sizeof (char *) == WORD_BYTE);
   for (int index = argc; index >= 0; index--)
     {
-      if_.esp -= sizeof(char*);
+      if_.esp -= sizeof (char *);
       *((char **)if_.esp) = argv[index];
     }
   // update argv from local adress to stack adress
-  char** argv_stack_adress = (char**)if_.esp;
+  char **argv_stack_adress = (char **)if_.esp;
 
   // push argv into stack
-  ASSERT (sizeof(char**) == WORD_BYTE);
-  if_.esp -= sizeof(char**);
+  ASSERT (sizeof (char **) == WORD_BYTE);
+  if_.esp -= sizeof (char **);
   *((char ***)if_.esp) = argv_stack_adress;
 
   // push argc into stack
-  ASSERT (sizeof(int) == WORD_BYTE);
-  if_.esp -= sizeof(int);
-  *((int*)if_.esp) = argc;
+  ASSERT (sizeof (int) == WORD_BYTE);
+  if_.esp -= sizeof (int);
+  *((int *)if_.esp) = argc;
 
-  typedef void (*func_ptr_type)(void);
+  typedef void (*func_ptr_type) (void);
 
   // push return adress into stack
-  ASSERT (sizeof(func_ptr_type) == WORD_BYTE);
-  if_.esp -= sizeof(func_ptr_type);
+  ASSERT (sizeof (func_ptr_type) == WORD_BYTE);
+  if_.esp -= sizeof (func_ptr_type);
   *(func_ptr_type *)if_.esp = NULL;
 
   // palloc_free_page (para_passing->fn_copy);
-  sema_up(para_passing->sema);
+  sema_up (para_passing->sema);
 
   /* If load failed, quit. */
   if (!success)
@@ -191,7 +192,8 @@ start_process (void *para_passing_)
 int
 process_wait (tid_t child_tid UNUSED)
 {
-  while (true);
+  while (true)
+    ;
   return -1;
 }
 
