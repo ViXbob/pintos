@@ -32,7 +32,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static void lock_sema_down_with_donate (struct lock *lock);
+static void update_with_donate (struct lock *lock);
 static void remove_donate_thread (struct semaphore *sema,
                                   struct list *donator_list);
 static bool condvar_cmp_pri (const struct list_elem *a,
@@ -131,8 +131,8 @@ sema_up (struct semaphore *sema)
 
   sema->value++;
   intr_set_level (old_level);
-  if (flag)
-    thread_yield ();
+  if (flag && !intr_context ())
+    thread_yield (); 
 }
 
 static void sema_test_helper (void *sema_);
@@ -198,7 +198,7 @@ lock_init (struct lock *lock)
 }
 
 void
-lock_sema_down_with_donate (struct lock *lock)
+update_with_donate (struct lock *lock)
 {
   struct semaphore *sema;
   enum intr_level old_level;
@@ -209,16 +209,12 @@ lock_sema_down_with_donate (struct lock *lock)
   ASSERT (sema != NULL);
   ASSERT (!intr_context ());
   ASSERT (sema->value == 0);
-  // ASSERT (PRI_MIN <= thread_get_priority() + 1 && thread_get_priority() + 1
-  // <= PRI_MAX);
 
   old_level = intr_disable ();
 
   thread_current ()->holder = lock->holder;
   list_push_back (&lock->donator_list, &thread_current ()->lock_donate_elem);
   list_push_back (&lock->holder->donate_list, &thread_current ()->donate_elem);
-  // lock->holder->priority = list_entry(list_max (&lock->holder->donate_list,
-  // thread_cmp_priority, NULL), struct thread, donate_elem)->priority;
   thread = thread_current ();
   parent_holder = thread->holder;
   while (parent_holder != NULL)
@@ -229,9 +225,6 @@ lock_sema_down_with_donate (struct lock *lock)
       thread = parent_holder;
       parent_holder = thread->holder;
     }
-
-  sema_down (sema);
-
   intr_set_level (old_level);
 }
 
@@ -250,8 +243,6 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
-  // sema_down (&lock->semaphore);
-  // lock->holder = thread_current ();
   if (lock->holder == NULL)
     {
       sema_down (&lock->semaphore);
@@ -259,7 +250,8 @@ lock_acquire (struct lock *lock)
     }
   else
     {
-      lock_sema_down_with_donate (lock);
+      update_with_donate (lock);
+      sema_down (&lock->semaphore);
       lock->holder = thread_current ();
       list_init (&lock->donator_list);
     }
