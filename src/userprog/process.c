@@ -12,6 +12,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -91,6 +92,25 @@ process_execute (const char *file_name)
   sema_down (para_passing.sema);
   palloc_free_page (para_passing.fn_copy);
   sema_up (para_passing.sema);
+
+  struct find_thread find_thread;
+  enum intr_level old_level;
+  find_thread.tid = tid;
+  find_thread.t = NULL;
+
+  old_level = intr_disable ();
+  thread_foreach (&find_thread_with_tid, (void *)&find_thread);
+  intr_set_level (old_level);
+
+  ASSERT (find_thread.t != NULL);
+  struct thread *t = find_thread.t;
+
+  lock_acquire (&thread_current ()->count_lock);
+  list_push_back (&thread_current ()->child_process_list, &t->process_elem);
+  thread_current ()->child_count++;
+  lock_release (&thread_current ()->count_lock);
+  t->parent_thread = thread_current ();
+
   return tid;
 }
 
@@ -102,6 +122,8 @@ start_process (void *para_passing_)
   struct para_passing *para_passing = para_passing_;
   struct intr_frame if_;
   bool success;
+
+  lock_acquire (&thread_current ()->exit_status_lock);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -167,8 +189,12 @@ start_process (void *para_passing_)
   sema_up (para_passing->sema);
 
   /* If load failed, quit. */
-  if (!success)
+  if (!success) {
+    thread_current ()->exit_status = -1;
+    lock_release (&thread_current ()->exit_status_lock);
     thread_exit ();
+  }
+    
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -190,11 +216,28 @@ start_process (void *para_passing_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED)
+process_wait (tid_t child_tid)
 {
-  while (true)
-    ;
-  return -1;
+  struct find_thread find_thread;
+  enum intr_level old_level;
+  int process_status;
+  find_thread.tid = child_tid;
+  find_thread.t = NULL;
+
+  old_level = intr_disable ();
+  thread_foreach (&find_thread_with_tid, (void *)&find_thread);
+  intr_set_level (old_level);
+  
+  if (find_thread.t == NULL)
+    return -1;
+  if (find_thread.t->parent_thread != thread_current ())
+    return -1;
+  lock_acquire (&thread_current ()->get_exit_status_lock);
+  lock_acquire (&find_thread.t->exit_status_lock);
+  process_status = find_thread.t->exit_status;
+  lock_release (&find_thread.t->exit_status_lock);
+  lock_release (&thread_current ()->get_exit_status_lock);
+  return process_status;
 }
 
 /* Free the current process's resources. */
