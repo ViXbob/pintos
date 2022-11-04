@@ -2,6 +2,7 @@
 #define THREADS_THREAD_H
 
 #include "threads/fixed-point.h"
+#include "threads/synch.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -26,7 +27,8 @@ typedef int tid_t;
 #define PRI_MAX 63     /* Highest priority. */
 
 /* Clamp priority into [PRIMIN, PRIMAX]. */
-#define clamp_pri(pri) ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
+#define clamp_pri(pri)                                                        \
+  ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
 
 /* A kernel thread or user process.
 
@@ -115,6 +117,18 @@ struct thread
   /* For multilevel feedback queue scheduler. */
   fp recent_cpu; /* How much CPU time each process has received "recently". */
   int nice; /* Nice value that determines how "nice" the thread should be. */
+
+  /* For user process. */
+  int exit_status;                  /* Exit status. */
+  struct lock exit_status_lock;     /* Lock for exit status. */
+  struct lock get_exit_status_lock; /* Lock for getting exit status. */
+  struct list child_process_list;   /* Child processes semaphore. */
+  struct list_elem process_elem; /* Child processes semaphore list element. */
+  int child_count;               /* Counter indicating hos many child processes
+                                    are running.*/
+  struct lock count_lock;        /* Lock for child processes counter. */
+  struct condition condvar;      /* Conditional variable for signaling. */
+  struct thread *parent_thread;  /* Parent thread. */
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
