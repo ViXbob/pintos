@@ -620,11 +620,21 @@ init_thread (struct thread *t, const char *name, int priority)
   else
     t->priority = priority;
   t->origin_priority = priority;
-  t->magic = THREAD_MAGIC;
+  
   list_init (&t->donate_list);
   t->holder = NULL;
   t->recent_cpu = 0;
   t->nice = 0;
+
+  /* For user process. */
+  lock_init (&t->exit_status_lock);
+  lock_init (&t->get_exit_status_lock);
+  list_init (&t->child_process_list);
+  t->child_count = 0;
+  lock_init (&t->count_lock);
+  cond_init (&t->condvar);
+
+  t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
