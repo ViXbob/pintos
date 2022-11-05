@@ -131,8 +131,10 @@ sema_up (struct semaphore *sema)
 
   sema->value++;
   intr_set_level (old_level);
+  #ifndef USERPROG
   if (flag && !intr_context ())
     thread_yield (); 
+  #endif
 }
 
 static void sema_test_helper (void *sema_);
