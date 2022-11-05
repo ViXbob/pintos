@@ -3,6 +3,7 @@
 
 #include "threads/fixed-point.h"
 #include "threads/synch.h"
+#include "userprog/process.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -119,16 +120,11 @@ struct thread
   int nice; /* Nice value that determines how "nice" the thread should be. */
 
   /* For user process. */
-  int exit_status;                  /* Exit status. */
-  struct lock exit_status_lock;     /* Lock for exit status. */
-  struct lock get_exit_status_lock; /* Lock for getting exit status. */
-  struct list child_process_list;   /* Child processes semaphore. */
-  struct list_elem process_elem; /* Child processes semaphore list element. */
-  int child_count;               /* Counter indicating hos many child processes
-                                    are running.*/
-  struct lock count_lock;        /* Lock for child processes counter. */
-  struct condition condvar;      /* Conditional variable for signaling. */
-  struct thread *parent_thread;  /* Parent thread. */
+  int exit_status;                /* Exit status. */
+  struct list child_process_list; /* Child processes semaphore. */
+  struct list file_list;          /* Files current thread opened. */
+  struct file *code_file;         /* Code of this thread. */
+  struct process_status *pcb;     /* PCB pointer of current thread. */
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
@@ -179,5 +175,6 @@ int thread_get_load_avg (void);
 void thread_update_load_avg (void);
 void thread_update_recent_cpu (struct thread *t, void *aux);
 void thread_update_priority (struct thread *t, void *aux);
+int ready_threads (void);
 
 #endif /* threads/thread.h */
