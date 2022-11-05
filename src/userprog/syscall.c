@@ -1,10 +1,12 @@
 #include "userprog/syscall.h"
+#include "userprog/pagedir.h"
 #include "devices/input.h"
 #include "devices/shutdown.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
+#include "threads/palloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
@@ -86,22 +88,9 @@ static int get_user_byte (const uint8_t *uaddr);
 static bool user_memory_check (void *uaddr, int bytes);
 static bool user_string_memory_check (char *uaddr);
 
-struct file_descriptor
-{
-  int fd;
-  struct file *file;
-  // struct lock lock;
-  struct list_elem file_elem;
-};
-
-static struct list file_list;
 static int fd_pool;
 
-static struct file_descriptor *find_file_with_fd (int fd);
-
-/* You should use synchronization to ensure that only one
-   process at a time is executing file system code. */
-static struct lock filesys_lock;
+static struct file_descriptor *find_file_with_fd (struct list *list, int fd);
 
 void
 halt (void)
@@ -112,45 +101,7 @@ halt (void)
 void
 exit (int status)
 {
-  struct thread *t = thread_current ();
-  // check whether current thread can exit
-  lock_acquire (&t->count_lock);
-  if (t->child_count > 0)
-    {
-      // there is no need to wait for child processes
-      // cond_wait (&t->condvar, &t->count_lock);
-      struct list_elem *e;
-      for (e = list_begin (&t->child_process_list);
-           e != list_end (&t->child_process_list); e = list_next (e))
-        {
-          struct thread *child_process
-              = list_entry (e, struct thread, process_elem);
-          child_process->parent_thread = NULL;
-        }
-    }
-  lock_release (&t->count_lock);
-
-  if (t->parent_thread != NULL)
-    {
-      lock_acquire (&t->parent_thread->count_lock);
-      list_remove (&t->process_elem);
-      t->parent_thread->child_count--;
-      // there is no need to wait for child processes
-      // if (t->parent_thread->child_count == 0)
-      //   cond_signal (&t->parent_thread->condvar,
-      //                &t->parent_thread->count_lock);
-      lock_release (&t->parent_thread->count_lock);
-    }
-
-  t->exit_status = status;
-  // Print exit status.
-  printf ("%s: exit(%d)\n", t->name, t->exit_status);
-  lock_release (&t->exit_status_lock);
-  if (t->parent_thread != NULL)
-    {
-      lock_acquire (&t->parent_thread->get_exit_status_lock);
-      lock_release (&t->parent_thread->get_exit_status_lock);
-    }
+  thread_current ()->exit_status = status;
   thread_exit ();
 }
 
@@ -187,12 +138,15 @@ open (const char *file_name)
     return -1;
   else
     {
-      file_opened = (struct file_descriptor *)malloc (
-          sizeof (struct file_descriptor *));
+      // file_opened = (struct file_descriptor *)malloc (
+      //     sizeof (struct file_descriptor));
+      file_opened = palloc_get_page (0);
+      if (file_opened == NULL)
+        exit (-1);
       file_opened->fd = fd_pool;
       fd_pool++;
       file_opened->file = file;
-      list_push_back (&file_list, &file_opened->file_elem);
+      list_push_back (&thread_current ()->file_list, &file_opened->file_elem);
       return file_opened->fd;
     }
 }
@@ -200,7 +154,7 @@ open (const char *file_name)
 int
 filesize (int fd)
 {
-  struct file_descriptor *f = find_file_with_fd (fd);
+  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
     exit (-1);
   return file_length (f->file);
@@ -217,7 +171,9 @@ read (int fd, void *buffer, unsigned length)
     }
   else
     {
-      struct file_descriptor *f = find_file_with_fd (fd);
+      struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+      if (f == NULL)
+        exit (-1);
       return file_read (f->file, buffer, length);
     }
 }
@@ -232,15 +188,19 @@ write (int fd, const void *buffer, unsigned length)
     }
   else
     {
-      struct file_descriptor *f = find_file_with_fd (fd);
-      return file_write (f->file, buffer, length);
+      struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+      if (f == NULL)
+        exit (-1);
+      int bytes = file_write (f->file, buffer, length);
+      // printf ("%s write %d bytes.\n", thread_name(), bytes);
+      return bytes;
     }
 }
 
 void
 seek (int fd, unsigned position)
 {
-  struct file_descriptor *f = find_file_with_fd (fd);
+  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
     exit (-1);
   return file_seek (f->file, position);
@@ -249,7 +209,7 @@ seek (int fd, unsigned position)
 unsigned
 tell (int fd)
 {
-  struct file_descriptor *f = find_file_with_fd (fd);
+  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
     exit (-1);
   return file_tell (f->file);
@@ -258,13 +218,14 @@ tell (int fd)
 void
 close (int fd)
 {
-  struct file_descriptor *f = find_file_with_fd (fd);
+  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
     exit (-1);
   else
     {
       list_remove (&f->file_elem);
       file_close (f->file);
+      palloc_free_page (f);
     }
 }
 
@@ -307,6 +268,9 @@ syscall_wait (struct intr_frame *f)
     exit (-1);
   tid_t process = *((tid_t *)(f->esp + 4));
   f->eax = wait (process);
+  // printf("syscall_wait result is %d\n", f->eax);
+  // printf("next line to run %p.\n", f->eip);
+  // printf("next line to 0x%08x\n", *(uint32_t *)(f->eip));
 }
 
 static void
@@ -458,7 +422,7 @@ syscall_init (void)
   // init filesys_lock
   lock_init (&filesys_lock);
   // init file_list
-  list_init (&file_list);
+  // list_init (&thread_current ()->file_list);
   // exclude STDIN / STDOUT
   fd_pool = 2;
 }
@@ -504,7 +468,7 @@ user_memory_check (void *uaddr, int bytes)
 {
   enum intr_level old_level;
   old_level = intr_disable ();
-  if (uaddr + bytes > PHYS_BASE || uaddr < (void *)0x08048000)
+  if (uaddr + bytes > PHYS_BASE)
     {
       intr_set_level (old_level);
       return false;
@@ -512,6 +476,8 @@ user_memory_check (void *uaddr, int bytes)
 
   for (int i = 0; i < bytes; i++)
     {
+      if (pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
+        return false;
       if (get_user_byte ((uint8_t *)(uaddr + i)) == -1)
         {
           intr_set_level (old_level);
@@ -529,7 +495,8 @@ user_string_memory_check (char *uaddr)
   old_level = intr_disable ();
   for (int i = 0;; i++)
     {
-      if (((void *)uaddr + i) >= PHYS_BASE || (void *)(uaddr + i) < (void *)0x08048000)
+      if (((void *)uaddr + i) >= PHYS_BASE
+          || pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
         {
           intr_set_level (old_level);
           return false;
@@ -546,11 +513,10 @@ user_string_memory_check (char *uaddr)
 }
 
 static struct file_descriptor *
-find_file_with_fd (int fd)
+find_file_with_fd (struct list *list, int fd)
 {
   struct list_elem *e;
-  for (e = list_begin (&file_list); e != list_end (&file_list);
-       e = list_next (e))
+  for (e = list_begin (list); e != list_end (list); e = list_next (e))
     {
       struct file_descriptor *f
           = list_entry (e, struct file_descriptor, file_elem);
@@ -568,5 +534,31 @@ find_thread_with_tid (struct thread *t, void *aux)
   if (t->tid == find_thread->tid)
     {
       find_thread->t = t;
+    }
+}
+
+void 
+find_process_with_pid (struct process_status *pcb, void *aux)
+{
+  struct find_process *find_process;
+  find_process = (struct find_process *)aux;
+  if (find_process->pid == pcb->pid)
+    {
+      find_process->pcb = pcb;
+    }
+}
+
+void
+child_process_foreach (struct thread *t, process_action_func *func, void *aux)
+{
+  struct list_elem *e;
+
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  for (e = list_begin (&t->child_process_list);
+       e != list_end (&t->child_process_list); e = list_next (e))
+    {
+      struct process_status *pcb = list_entry (e, struct process_status, process_elem);
+      func (pcb, aux);
     }
 }
