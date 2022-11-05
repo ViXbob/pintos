@@ -2,6 +2,8 @@
 #define THREADS_THREAD_H
 
 #include "threads/fixed-point.h"
+#include "threads/synch.h"
+#include "userprog/process.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -26,7 +28,8 @@ typedef int tid_t;
 #define PRI_MAX 63     /* Highest priority. */
 
 /* Clamp priority into [PRIMIN, PRIMAX]. */
-#define clamp_pri(pri) ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
+#define clamp_pri(pri)                                                        \
+  ((pri) < PRI_MIN ? PRI_MIN : ((pri) > PRI_MAX ? PRI_MAX : (pri)))
 
 /* A kernel thread or user process.
 
@@ -116,6 +119,13 @@ struct thread
   fp recent_cpu; /* How much CPU time each process has received "recently". */
   int nice; /* Nice value that determines how "nice" the thread should be. */
 
+  /* For user process. */
+  int exit_status;                /* Exit status. */
+  struct list child_process_list; /* Child processes semaphore. */
+  struct list file_list;          /* Files current thread opened. */
+  struct file *code_file;         /* Code of this thread. */
+  struct process_status *pcb;     /* PCB pointer of current thread. */
+
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
 };
@@ -165,5 +175,6 @@ int thread_get_load_avg (void);
 void thread_update_load_avg (void);
 void thread_update_recent_cpu (struct thread *t, void *aux);
 void thread_update_priority (struct thread *t, void *aux);
+int ready_threads (void);
 
 #endif /* threads/thread.h */

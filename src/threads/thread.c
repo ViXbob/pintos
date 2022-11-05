@@ -3,14 +3,17 @@
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "filesys/file.h"
 #include <debug.h>
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include "userprog/syscall.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -79,7 +82,7 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 static void insert_blocked_list (struct thread *);
-static int ready_threads (void);
+// static int ready_threads (void);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -378,6 +381,67 @@ thread_exit (void)
 {
   ASSERT (!intr_context ());
 
+  struct thread *t = thread_current ();
+  // check whether current thread can exit
+  // enum intr_level old;
+  // old = intr_disable ();
+  ATOM 
+    {
+      
+      while (!list_empty (&t->child_process_list))
+        {
+          struct list_elem *e = list_begin(&t->child_process_list);
+          struct process_status *child_process
+              = list_entry (e, struct process_status, process_elem);
+          list_remove (e);
+          // printf ("%p, %p\n", child_process->t->pcb, child_process);
+          // ASSERT (child_process->t->pcb == child_process);
+          child_process->parent_thread = NULL;
+          bool died = lock_try_acquire (&child_process->lock_exit_status);
+          if (died)
+            {
+              lock_release (&child_process->lock_exit_status);
+              // printf ("%s's child process %s died, free the pcb.\n", thread_name (), child_process->t->name);
+              palloc_free_page (child_process);
+            }
+        }
+      list_init (&t->child_process_list);
+    }
+
+  // close all file this process opened
+  while (!list_empty (&t->file_list))
+    {
+      struct file_descriptor *f
+          = list_entry (list_begin (&t->file_list), struct file_descriptor, file_elem);
+      list_remove (&f->file_elem);
+      file_close (f->file);
+      // printf ("close %s's opened file.\n", thread_name ());
+      palloc_free_page (f);
+    }
+
+  // Print exit status.
+  printf ("%s: exit(%d)\n", t->name, t->exit_status);
+  t->pcb->exit_status = t->exit_status;
+
+  if (t->code_file != NULL)
+    {
+      file_close (t->code_file);
+    }
+  else
+    {
+      // ASSERT (false);
+    }
+
+  lock_release (&t->pcb->lock_exit_status);
+
+  if (t->pcb->parent_thread == NULL)
+    {
+      // printf ("If one's parent is gone, we can free it.\n");
+      palloc_free_page (t->pcb);
+    }
+
+  // printf ("After %s exits, there are %d threads waiting to process.\n", thread_name (), ready_threads());
+
 #ifdef USERPROG
   process_exit ();
 #endif
@@ -455,6 +519,7 @@ thread_set_priority (int new_priority)
 
   /* You should not change priority manually in mlfqs mode. */
   ASSERT (!thread_mlfqs);
+  ASSERT (!intr_context ());
 
   old_level = intr_disable ();
   thread_current ()->origin_priority = new_priority;
@@ -619,11 +684,20 @@ init_thread (struct thread *t, const char *name, int priority)
   else
     t->priority = priority;
   t->origin_priority = priority;
-  t->magic = THREAD_MAGIC;
+  
   list_init (&t->donate_list);
   t->holder = NULL;
   t->recent_cpu = 0;
   t->nice = 0;
+
+  /* For user process. */
+  list_init (&t->child_process_list);
+  list_init (&t->file_list);
+  t->exit_status = -1;
+  t->code_file = NULL;
+  t->pcb = NULL;
+
+  t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

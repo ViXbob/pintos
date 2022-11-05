@@ -1,5 +1,5 @@
              +--------------------------+
-             |          CS 140          |
+             |          CS 130          |
              | PROJECT 2: USER PROGRAMS |
              |     DESIGN DOCUMENT      |
              +--------------------------+
@@ -17,9 +17,14 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
 
+None.
+
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
+
+None.
+
 
                ARGUMENT PASSING
                ================
@@ -30,19 +35,35 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+None.
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe how you implemented argument parsing.  How do
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
 
+file_name in `process_execute` have not only the thread name but also arguments. First,we use `strlcpy` copy a bak for file_name to passing  arguments down and we use `strtok_r` to divide this string to thread name and other arguments to confirm the thread name when create thread. 
+We donot consider about overflowing the stack page.
+
+stackoverflow check! //TODO_CODE
+
 ---- RATIONALE ----
 
 >> A3: Why does Pintos implement strtok_r() but not strtok()?
 
+`strtok_r()` is thread safety, but `strtok` not.
+
+strtok_r is more thread safety. It is reentrant to avoid the situation where another thread gains control and calls strtok at the same time, which would change the save ptr.
+When the original thread regains control, it will recover from the strtok of the other thread. In strtok_r, we provide saveptr, so we avoid this problem.
+
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
+
+First, reduced time within the kernel. 
+Then,robust checks. Check the existence of an executable before passing it to the kernel to avoid kernel failure. 
+Moreover, ability to pass multiple sets of commands at once.
 
                  SYSTEM CALLS
                  ============
@@ -53,14 +74,62 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+/* thread.h */
+struct thread
+{
+  ```
+    /* For user process. */
+  int exit_status;                /* Exit status. */
+  struct list child_process_list; /* Child processes semaphore. */
+  struct list file_list;          /* Files current thread opened. */
+  struct file *code_file;         /* Code of this thread. */
+  struct process_status *pcb;     /* PCB pointer of current thread. */ 
+}
+
+/* syscall.h */
+struct lock filesys_lock;         /* file system lock */
+struct find_thread                /* find thread by tid */
+{
+  int tid;
+  struct thread *t;
+};
+struct find_process               /* find process by pid */
+{
+  int pid;
+  struct process_status *pcb;
+};
+struct file_descriptor
+{
+  int fd;
+  struct file *file;
+  struct list_elem file_elem;
+};
+
+/* process.h */
+struct process_status
+{
+  /* PCB */
+  int pid;
+  struct thread *t;
+  struct thread *parent_thread;
+  int exit_status;                  /* Exit status. */
+  struct lock lock_exit_status;
+  struct list_elem process_elem;
+}
+
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
+
+File descriptors are just unique within a single process. Each process has its own unique file descriptor counter fd, which is incremented each time a file is opened.
 
 ---- ALGORITHMS ----
 
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
+
+First, check whether all pointer are valid in syscall handler and use syscall to access them.
+
 
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
@@ -69,8 +138,15 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
+For each byte `pagedir_get_page()` needs to be called, because it is not known how many of the next bytes the user points to are on the same page.
+If `pagedir_get_page()` is not used for pointer validation and all data is stored on a page, then the minimum number of times it may be called is 1.
+If `pagedir_get_page()` is not used for pointer validation and the data is distributed in byte-sized pieces on 4096 pages, the maximum number of times it may be called is 4096.
+Use virtual memory to get improvements.
+
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
+
+First, check whether all pointer are valid. Then call `process_wait` which use lock to wait all its child threads are exit.
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -86,12 +162,26 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
+We verify each pointer we encounter with `user_memory_check`, checking that the return value is NULL to ensure that the pointer refers to a valid address, that it is correctly mapped to a page directory, that the address is less than PHYS_BASE, and that it is not a kernel pointer.
+When there is something wrong, return false and `exit(-1)`,the resources will release in `thread_exit`.
+
+Give an example about `syscall_write`:
+Assume that all memory checks pass in the following sections. Only the places that are memory checks are shown.
+In `syscall_write`, we check if the stack pointer is valid. Then check if `(void **)(f->esp + 8)` (buffer) is valid. After that get `filesys_lock` and release it after calling function `write`. (1)`fd == STDOUT` call `putbuf` and return. (2) Otherwise check if file_descriptor is valid then call `file_write` with filesys and return.
+
+And if there exists invalid pointer, call `exit(-1)`, the resources will release in `thread_exit`.
+
+
+
 ---- SYNCHRONIZATION ----
 
 >> B7: The "exec" system call returns -1 if loading the new executable
 >> fails, so it cannot return before the new executable has completed
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
+
+Using the return value of `process_exec`, if the program returns -1 means that there was a problem during the new executable.
+Use semaphore for synchronization. First, the parent process creates the child process, then sema_down, which notifies the parent process of the result of the load when the child process finishes loading, and then sema_up, when the parent process wakes up and returns the result.
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
@@ -100,16 +190,44 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
+Consider parent process P with child process C.  
+How do you ensure proper synchronization and avoid race conditions when P calls wait(C) before C exits?  
+After C exits?  
+//Use a semaphore to ensure proper synchronization and avoid race conditions.
+//If P calls wait before C exits, it will be added to the semaphore's wait list until C sema up, thus waking up the parent process. 
+//If P calls wait after C exits, and the exit flag is true, then the semaphore is not shut down. The resources that must be freed are the child process resources in the parent's child_process_list. These structures are released once the parent process has finished waiting for its child processes.
+
+How do you ensure that all resources are freed in each case?  
+// Before parent thread exit, check all its child process whether release all resources, after that release its resources and exit.
+
+How about when P terminates without waiting, before C exits? 
+After C exits?
+//If P terminates before C exits, C detects that its parent thread is dead (parent_thread == NULL) and therefore does not attempt to access its child_process_list in the parent process. 
+//If P terminates without waiting after C exits, then C's child_process_list is released in remove _child_processes() with all other child_processes.
+
+Are there any special cases?
+//the initial thread which `parent_thread == NULL`.
+
 ---- RATIONALE ----
 
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
+The second method in the document, check only that a user pointer points below PHYS_BASE, then dereference it. It is a more effectively way for operating system compared with the first method, that is to verify the validity of a user-provided pointer, then dereference it by the document.
+
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
+Advantages:
+Since each thread has a list of file descriptors, there is no limit to the number of file descriptors that can be opened.
+
+Disadvantages:
+There are many duplicate file descriptor structures, like each thread contains structures for these stdin/stdout file descriptors.
+
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
+
+We didn't change it.
 
                SURVEY QUESTIONS
                ================

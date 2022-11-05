@@ -67,4 +67,7 @@ void intr_yield_on_return (void);
 void intr_dump_frame (const struct intr_frame *);
 const char *intr_name (uint8_t vec);
 
+/* Atomic operation. */
+#define ATOM for (int __ = 0, old = intr_disable(); __ < 1; intr_set_level(old), __++)
+
 #endif /* threads/interrupt.h */
