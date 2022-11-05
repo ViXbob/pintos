@@ -67,16 +67,16 @@ process_execute (const char *file_name)
   struct semaphore sema_pcb;
 
   /* Palloc memory for variable. */ 
-  child_process = palloc_get_page(0);
+  child_process = palloc_get_page(PAL_ZERO);
   if (child_process == NULL)
     goto palloc_failed;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
+  fn_copy = palloc_get_page (PAL_ZERO);
   if (fn_copy == NULL)
     goto palloc_failed;
 
-  process_name = palloc_get_page (0);
+  process_name = palloc_get_page (PAL_ZERO);
   if (process_name == NULL)
     goto palloc_failed;
 
@@ -100,22 +100,24 @@ process_execute (const char *file_name)
   tid = thread_create (process_name, PRI_DEFAULT, start_process,
                        &para_passing);
 
-  if (tid == TID_ERROR)
+  /* Set pcb & wait pid to be set. */
+  sema_down (para_passing.sema_pcb);
+  /* child_process->pid = tid; */
+  if (child_process->pid >= 0)
+    list_push_back (&thread_current ()->child_process_list, &child_process->process_elem);
+  else 
     goto palloc_failed;
 
   sema_down (para_passing.sema_fn_copy);
+  // printf ("free fn_copy & process_name.\n");
   // free two temporary string
   palloc_free_page (fn_copy);
   palloc_free_page (process_name);
-  
-  // Set pcb.
-  sema_down (para_passing.sema_pcb);
-  child_process->pid = tid;
-  list_push_back (&thread_current ()->child_process_list, &child_process->process_elem);
 
   return tid;
 
 palloc_failed:
+  // printf ("If palloc error, free all of them.\n");
   if (fn_copy != NULL) 
     palloc_free_page (fn_copy);
   if (process_name != NULL)
@@ -132,7 +134,7 @@ start_process (void *para_passing_)
 {
   struct para_passing *para_passing = para_passing_;
   struct intr_frame if_;
-  bool success;
+  bool success = false;
 
   lock_init (&para_passing->pcb->lock_exit_status);
   lock_acquire (&para_passing->pcb->lock_exit_status);
@@ -145,13 +147,26 @@ start_process (void *para_passing_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  char *argv[MAX_PARAMETER] = { NULL };
   int argc = 0;
-  parse_parameter (para_passing->fn_copy, &argc, (char **)&argv);
+  char **argv = (char**) palloc_get_page(PAL_ZERO);
+
+  if (argv == NULL)
+    {
+      success = false;
+      goto memory_error;
+    }
+
+  parse_parameter (para_passing->fn_copy, &argc, (char **)argv);
 
   ASSERT (argc > 0);
 
   success = load (argv[0], &if_.eip, &if_.esp);
+
+  if (!success)
+    {
+      thread_current ()->tid = TID_ERROR;
+      goto memory_error;
+    }
 
   // push arguments (string) into stack
   size_t total_length = 0;
@@ -198,6 +213,13 @@ start_process (void *para_passing_)
   ASSERT (sizeof (func_ptr_type) == WORD_BYTE);
   if_.esp -= sizeof (func_ptr_type);
   *(func_ptr_type *)if_.esp = NULL;
+
+
+memory_error:
+  if (argv != NULL)
+    palloc_free_page (argv);
+
+  para_passing->pcb->pid = thread_current ()->tid;
 
   sema_up (para_passing->sema_fn_copy);
   sema_up (para_passing->sema_pcb);
