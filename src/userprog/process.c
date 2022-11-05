@@ -6,6 +6,7 @@
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
@@ -45,7 +46,9 @@ parse_parameter (char *str, int *argc, char **argv)
 struct para_passing
 {
   char *fn_copy;
-  struct semaphore *sema;
+  struct semaphore *sema_fn_copy;
+  struct process_status *pcb;
+  struct semaphore *sema_pcb;
 };
 
 /* Starts a new thread running a user program loaded from
@@ -56,62 +59,70 @@ tid_t
 process_execute (const char *file_name)
 {
   struct para_passing para_passing;
-  struct semaphore sema;
+  char *fn_copy = NULL;
+  char *process_name = NULL, *save_ptr = NULL;
+  struct process_status *child_process = NULL;
   tid_t tid;
+  struct semaphore sema_fn_copy;
+  struct semaphore sema_pcb;
 
-  /* Initialize lock. */
-  sema_init (&sema, 1);
-  para_passing.sema = &sema;
-
+  /* Palloc memory for variable. */ 
+  child_process = palloc_get_page(0);
+  if (child_process == NULL)
+    goto palloc_failed;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  para_passing.fn_copy = palloc_get_page (0);
-  if (para_passing.fn_copy == NULL)
-    return TID_ERROR;
+  fn_copy = palloc_get_page (0);
+  if (fn_copy == NULL)
+    goto palloc_failed;
+
+  process_name = palloc_get_page (0);
+  if (process_name == NULL)
+    goto palloc_failed;
+
+  /* Initialize semaphore & para passing. */
+  sema_init (&sema_fn_copy, 0);
+  sema_init (&sema_pcb, 0);
+  para_passing.sema_fn_copy = &sema_fn_copy;
+  para_passing.sema_pcb = &sema_pcb;
+  para_passing.pcb = child_process;
+  para_passing.fn_copy = fn_copy;
+  child_process->parent_thread = thread_current ();
+
+  /* Copy file name. */ 
   strlcpy (para_passing.fn_copy, file_name, PGSIZE);
+  strlcpy (process_name, file_name, PGSIZE);
 
   /* Get process name. */
-  char *para_copy;
-  char *process_name;
-  para_copy = palloc_get_page (0);
-  if (para_copy == NULL)
-    return TID_ERROR;
-  strlcpy (para_copy, file_name, PGSIZE);
-  char *str = para_copy;
-  process_name = strtok_r (str, " ", &str);
+  process_name = strtok_r (process_name, " ", &save_ptr);
 
-  sema_down (para_passing.sema);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (process_name, PRI_DEFAULT, start_process,
                        &para_passing);
+
   if (tid == TID_ERROR)
-    sema_up (para_passing.sema);
+    goto palloc_failed;
 
-  palloc_free_page (para_copy);
-
-  sema_down (para_passing.sema);
-  palloc_free_page (para_passing.fn_copy);
-  sema_up (para_passing.sema);
-
-  struct find_thread find_thread;
-  enum intr_level old_level;
-  find_thread.tid = tid;
-  find_thread.t = NULL;
-
-  old_level = intr_disable ();
-  thread_foreach (&find_thread_with_tid, (void *)&find_thread);
-  intr_set_level (old_level);
-
-  ASSERT (find_thread.t != NULL);
-  struct thread *t = find_thread.t;
-
-  lock_acquire (&thread_current ()->count_lock);
-  list_push_back (&thread_current ()->child_process_list, &t->process_elem);
-  thread_current ()->child_count++;
-  lock_release (&thread_current ()->count_lock);
-  t->parent_thread = thread_current ();
+  sema_down (para_passing.sema_fn_copy);
+  // free two temporary string
+  palloc_free_page (fn_copy);
+  palloc_free_page (process_name);
+  
+  // Set pcb.
+  sema_down (para_passing.sema_pcb);
+  child_process->pid = tid;
+  list_push_back (&thread_current ()->child_process_list, &child_process->process_elem);
 
   return tid;
+
+palloc_failed:
+  if (fn_copy != NULL) 
+    palloc_free_page (fn_copy);
+  if (process_name != NULL)
+    palloc_free_page (process_name);
+  if (child_process != NULL)
+    palloc_free_page (child_process);
+  return TID_ERROR;
 }
 
 /* A thread function that loads a user process and starts it
@@ -123,7 +134,10 @@ start_process (void *para_passing_)
   struct intr_frame if_;
   bool success;
 
-  lock_acquire (&thread_current ()->exit_status_lock);
+  lock_init (&para_passing->pcb->lock_exit_status);
+  lock_acquire (&para_passing->pcb->lock_exit_status);
+  para_passing->pcb->t = thread_current ();
+  thread_current ()->pcb = para_passing->pcb;
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -185,13 +199,12 @@ start_process (void *para_passing_)
   if_.esp -= sizeof (func_ptr_type);
   *(func_ptr_type *)if_.esp = NULL;
 
-  // palloc_free_page (para_passing->fn_copy);
-  sema_up (para_passing->sema);
+  sema_up (para_passing->sema_fn_copy);
+  sema_up (para_passing->sema_pcb);
 
   /* If load failed, quit. */
   if (!success) {
     thread_current ()->exit_status = -1;
-    lock_release (&thread_current ()->exit_status_lock);
     thread_exit ();
   }
     
@@ -218,25 +231,25 @@ start_process (void *para_passing_)
 int
 process_wait (tid_t child_tid)
 {
-  struct find_thread find_thread;
-  enum intr_level old_level;
+  struct find_process find_process;
   int process_status;
-  find_thread.tid = child_tid;
-  find_thread.t = NULL;
+  find_process.pid = child_tid;
+  find_process.pcb = NULL;
 
-  old_level = intr_disable ();
-  thread_foreach (&find_thread_with_tid, (void *)&find_thread);
-  intr_set_level (old_level);
-  
-  if (find_thread.t == NULL)
+  ATOM
+    {
+      child_process_foreach (thread_current (), &find_process_with_pid, (void *)&find_process);
+    }
+
+  // printf("%s in wait: %d\n", thread_name(), list_size (&thread_current ()->child_process_list));
+  if (find_process.pcb == NULL)
     return -1;
-  if (find_thread.t->parent_thread != thread_current ())
-    return -1;
-  lock_acquire (&thread_current ()->get_exit_status_lock);
-  lock_acquire (&find_thread.t->exit_status_lock);
-  process_status = find_thread.t->exit_status;
-  lock_release (&find_thread.t->exit_status_lock);
-  lock_release (&thread_current ()->get_exit_status_lock);
+  // printf("child process is %s, parent process is %s\n", find_thread.t->name, find_thread.t->parent_thread->name);
+  lock_acquire (&find_process.pcb->lock_exit_status);
+  process_status = find_process.pcb->exit_status;
+  lock_release (&find_process.pcb->lock_exit_status);
+  list_remove (&find_process.pcb->process_elem);
+  // printf("%s out wait: %d, child process status is %d\n", thread_name(), list_size (&thread_current ()->child_process_list), process_status);
   return process_status;
 }
 
@@ -371,13 +384,17 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  lock_acquire (&filesys_lock);
   file = filesys_open (file_name);
   if (file == NULL)
     {
       printf ("load: %s: open failed\n", file_name);
       goto done;
     }
-
+  
+  t->code_file = file;
+  file_deny_write (file);
+  
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2
@@ -458,7 +475,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
 done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  lock_release (&filesys_lock);
   return success;
 }
 
