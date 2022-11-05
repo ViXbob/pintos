@@ -120,20 +120,31 @@ wait (pid_t process)
 bool
 create (const char *file, unsigned initial_size)
 {
-  return filesys_create (file, initial_size);
+  bool result = false;
+  lock_acquire (&filesys_lock);
+  result = filesys_create (file, initial_size);
+  lock_release (&filesys_lock);
+  return result;
 }
 
 bool
 remove (const char *file)
 {
-  return filesys_remove (file);
+  bool result = false;
+  lock_acquire (&filesys_lock);
+  result = filesys_remove (file);
+  lock_release (&filesys_lock);
+  return result;
 }
 
 int
 open (const char *file_name)
 {
-  struct file *file = filesys_open (file_name);
+  struct file *file = NULL;
   struct file_descriptor *file_opened;
+  lock_acquire (&filesys_lock);
+  file = filesys_open (file_name);
+  lock_release (&filesys_lock);
   if (file == NULL)
     return -1;
   else
@@ -143,10 +154,12 @@ open (const char *file_name)
       file_opened = palloc_get_page (0);
       if (file_opened == NULL)
         exit (-1);
+      lock_acquire (&filesys_lock);
       file_opened->fd = fd_pool;
       fd_pool++;
       file_opened->file = file;
       list_push_back (&thread_current ()->file_list, &file_opened->file_elem);
+      lock_release (&filesys_lock);
       return file_opened->fd;
     }
 }
@@ -154,10 +167,18 @@ open (const char *file_name)
 int
 filesize (int fd)
 {
-  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+  struct file_descriptor *f = NULL;
+  int result = 0;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
-    exit (-1);
-  return file_length (f->file);
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
+  result = file_length (f->file);
+  lock_release (&filesys_lock);
+  return result;
 }
 
 int
@@ -165,16 +186,27 @@ read (int fd, void *buffer, unsigned length)
 {
   if (fd == STDIN)
     {
+      lock_acquire (&filesys_lock);
       for (unsigned i = 0; i < length; i++)
         *((char *)(buffer + i)) = input_getc ();
+      lock_release (&filesys_lock);
       return length;
     }
   else
     {
-      struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+      struct file_descriptor *f = NULL;
+      int result = -1;
+      lock_acquire (&filesys_lock);
+      f = find_file_with_fd (&thread_current ()->file_list, fd);
+      
       if (f == NULL)
-        exit (-1);
-      return file_read (f->file, buffer, length);
+        {
+          lock_release (&filesys_lock);
+          exit (-1);
+        }
+      result = file_read (f->file, buffer, length);
+      lock_release (&filesys_lock);
+      return result;
     }
 }
 
@@ -183,49 +215,78 @@ write (int fd, const void *buffer, unsigned length)
 {
   if (fd == STDOUT)
     {
+      lock_acquire (&filesys_lock);
       putbuf ((char *)buffer, length);
+      lock_release (&filesys_lock);
       return (int)length;
     }
   else
     {
-      struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+      struct file_descriptor *f = NULL;
+      int result = -1;
+      lock_acquire (&filesys_lock);
+      f = find_file_with_fd (&thread_current ()->file_list, fd);
+      
       if (f == NULL)
-        exit (-1);
-      int bytes = file_write (f->file, buffer, length);
-      // printf ("%s write %d bytes.\n", thread_name(), bytes);
-      return bytes;
+        {
+          lock_release (&filesys_lock);
+          exit (-1);
+        }
+      result = file_write (f->file, buffer, length);
+      lock_release (&filesys_lock);
+      return result;
     }
 }
 
 void
 seek (int fd, unsigned position)
 {
-  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+  struct file_descriptor *f = NULL;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
-    exit (-1);
-  return file_seek (f->file, position);
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
+  file_seek (f->file, position);
+  lock_release (&filesys_lock);
 }
 
 unsigned
 tell (int fd)
 {
-  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+  struct file_descriptor *f = NULL;
+  unsigned result = 0;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
-    exit (-1);
-  return file_tell (f->file);
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
+  result = file_tell (f->file);
+  lock_release (&filesys_lock);
+  return result;
 }
 
 void
 close (int fd)
 {
-  struct file_descriptor *f = find_file_with_fd (&thread_current ()->file_list, fd);
+  struct file_descriptor *f = NULL;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
   if (f == NULL)
-    exit (-1);
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
   else
     {
       list_remove (&f->file_elem);
       file_close (f->file);
       palloc_free_page (f);
+      lock_release (&filesys_lock);
     }
 }
 
@@ -282,9 +343,7 @@ syscall_create (struct intr_frame *f)
   if (!user_string_memory_check (file))
     exit (-1);
   uint32_t initial_size = *((uint32_t *)(f->esp + 8));
-  lock_acquire (&filesys_lock);
   f->eax = create (file, initial_size);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -295,9 +354,7 @@ syscall_remove (struct intr_frame *f)
   char *file = *((char **)(f->esp + 4));
   if (!user_string_memory_check (file))
     exit (-1);
-  lock_acquire (&filesys_lock);
   f->eax = remove (file);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -308,9 +365,7 @@ syscall_open (struct intr_frame *f)
   char *file = *((char **)(f->esp + 4));
   if (!user_string_memory_check (file))
     exit (-1);
-  lock_acquire (&filesys_lock);
   f->eax = open (file);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -319,9 +374,7 @@ syscall_filesize (struct intr_frame *f)
   if (!user_memory_check (f->esp, 4 * 2))
     exit (-1);
   int fd = *((int *)(f->esp + 4));
-  lock_acquire (&filesys_lock);
   f->eax = filesize (fd);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -337,9 +390,7 @@ syscall_read (struct intr_frame *f)
   if (!user_memory_check (buffer, size))
     exit (-1);
 
-  lock_acquire (&filesys_lock);
   f->eax = read (fd, buffer, size);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -356,9 +407,7 @@ syscall_write (struct intr_frame *f)
   if (!user_memory_check (buffer, size))
     exit (-1);
 
-  lock_acquire (&filesys_lock);
   f->eax = write (fd, buffer, size);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -370,9 +419,7 @@ syscall_seek (struct intr_frame *f)
   int fd = *((int *)(f->esp + 4));
   uint32_t position = *((uint32_t *)(f->esp + 8));
 
-  lock_acquire (&filesys_lock);
   seek (fd, position);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -383,9 +430,7 @@ syscall_tell (struct intr_frame *f)
 
   int fd = *((int *)(f->esp + 4));
 
-  lock_acquire (&filesys_lock);
   f->eax = tell (fd);
-  lock_release (&filesys_lock);
 }
 
 static void
@@ -396,9 +441,7 @@ syscall_close (struct intr_frame *f)
 
   int fd = *((int *)(f->esp + 4));
 
-  lock_acquire (&filesys_lock);
   close (fd);
-  lock_release (&filesys_lock);
 }
 
 void
