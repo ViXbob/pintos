@@ -394,12 +394,14 @@ thread_exit (void)
           struct process_status *child_process
               = list_entry (e, struct process_status, process_elem);
           list_remove (e);
-          ASSERT (child_process->t->pcb == child_process);
+          // printf ("%p, %p\n", child_process->t->pcb, child_process);
+          // ASSERT (child_process->t->pcb == child_process);
           child_process->parent_thread = NULL;
           bool died = lock_try_acquire (&child_process->lock_exit_status);
           if (died)
             {
               lock_release (&child_process->lock_exit_status);
+              // printf ("%s's child process %s died, free the pcb.\n", thread_name (), child_process->t->name);
               palloc_free_page (child_process);
             }
         }
@@ -413,6 +415,7 @@ thread_exit (void)
           = list_entry (list_begin (&t->file_list), struct file_descriptor, file_elem);
       list_remove (&f->file_elem);
       file_close (f->file);
+      // printf ("close %s's opened file.\n", thread_name ());
       palloc_free_page (f);
     }
 
@@ -426,13 +429,16 @@ thread_exit (void)
     }
   else
     {
-      ASSERT (false);
+      // ASSERT (false);
     }
 
   lock_release (&t->pcb->lock_exit_status);
 
   if (t->pcb->parent_thread == NULL)
-    palloc_free_page (t->pcb);
+    {
+      // printf ("If one's parent is gone, we can free it.\n");
+      palloc_free_page (t->pcb);
+    }
 
   // printf ("After %s exits, there are %d threads waiting to process.\n", thread_name (), ready_threads());
 
@@ -689,6 +695,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init (&t->file_list);
   t->exit_status = -1;
   t->code_file = NULL;
+  t->pcb = NULL;
 
   t->magic = THREAD_MAGIC;
 
