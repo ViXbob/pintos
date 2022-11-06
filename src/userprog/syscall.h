@@ -29,9 +29,13 @@ struct file_descriptor
 void find_process_with_pid (struct process_status *pcb, void *aux);
 void find_thread_with_tid (struct thread *t, void *aux);
 void child_process_foreach (struct thread *t, process_action_func *func, void *aux);
+/* Expose API close for thread_exit. */
+void close (int fd);
 
 /* You should use synchronization to ensure that only one
    process at a time is executing file system code. */
 struct lock filesys_lock;
+int valid_fd_num (void);
+
 
 #endif /* userprog/syscall.h */
