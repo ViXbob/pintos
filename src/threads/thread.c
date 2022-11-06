@@ -382,9 +382,6 @@ thread_exit (void)
   ASSERT (!intr_context ());
 
   struct thread *t = thread_current ();
-  // check whether current thread can exit
-  // enum intr_level old;
-  // old = intr_disable ();
   ATOM 
     {
       
@@ -394,18 +391,14 @@ thread_exit (void)
           struct process_status *child_process
               = list_entry (e, struct process_status, process_elem);
           list_remove (e);
-          // printf ("%p, %p\n", child_process->t->pcb, child_process);
-          // ASSERT (child_process->t->pcb == child_process);
           child_process->parent_thread = NULL;
           bool died = lock_try_acquire (&child_process->lock_exit_status);
           if (died)
             {
               lock_release (&child_process->lock_exit_status);
-              // printf ("%s's child process %s died, free the pcb.\n", thread_name (), child_process->t->name);
               palloc_free_page (child_process);
             }
         }
-      list_init (&t->child_process_list);
     }
 
   // close all file this process opened
@@ -413,10 +406,7 @@ thread_exit (void)
     {
       struct file_descriptor *f
           = list_entry (list_begin (&t->file_list), struct file_descriptor, file_elem);
-      list_remove (&f->file_elem);
-      file_close (f->file);
-      // printf ("close %s's opened file.\n", thread_name ());
-      palloc_free_page (f);
+      close (f->fd);
     }
 
   // Print exit status.
@@ -436,11 +426,8 @@ thread_exit (void)
 
   if (t->pcb->parent_thread == NULL)
     {
-      // printf ("If one's parent is gone, we can free it.\n");
       palloc_free_page (t->pcb);
     }
-
-  // printf ("After %s exits, there are %d threads waiting to process.\n", thread_name (), ready_threads());
 
 #ifdef USERPROG
   process_exit ();
