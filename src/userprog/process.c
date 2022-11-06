@@ -100,6 +100,9 @@ process_execute (const char *file_name)
   tid = thread_create (process_name, PRI_DEFAULT, start_process,
                        &para_passing);
 
+  if (tid == TID_ERROR)
+    goto palloc_failed;
+
   /* Set pcb & wait pid to be set. */
   sema_down (para_passing.sema_pcb);
   /* child_process->pid = tid; */
@@ -270,7 +273,9 @@ process_wait (tid_t child_tid)
   lock_acquire (&find_process.pcb->lock_exit_status);
   process_status = find_process.pcb->exit_status;
   lock_release (&find_process.pcb->lock_exit_status);
+  // Free child process's pcb & IMPORTANT !!!
   list_remove (&find_process.pcb->process_elem);
+  palloc_free_page (find_process.pcb);
   // printf("%s out wait: %d, child process status is %d\n", thread_name(), list_size (&thread_current ()->child_process_list), process_status);
   return process_status;
 }
