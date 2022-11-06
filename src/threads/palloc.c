@@ -40,6 +40,27 @@ static void init_pool (struct pool *, void *base, size_t page_cnt,
                        const char *name);
 static bool page_from_pool (const struct pool *, void *page);
 
+int __my_page_count = 0;
+
+void* __my_palloc_get_page (enum palloc_flags flags)
+{
+  void *page = palloc_get_page (flags);
+  if (page != NULL)
+    __my_page_count++;
+  return page;
+}
+void __my_palloc_free_page (void *page)
+{
+  __my_page_count--;
+  palloc_free_page (page);
+}
+
+int 
+__my_get_page_count (void)
+{
+  return __my_page_count;
+}
+
 /* Initializes the page allocator.  At most USER_PAGE_LIMIT
    pages are put into the user pool. */
 void
