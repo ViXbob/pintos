@@ -56,7 +56,6 @@ int read (int fd, void *buffer, unsigned length);
 int write (int fd, const void *buffer, unsigned length);
 void seek (int fd, unsigned position);
 unsigned tell (int fd);
-void close (int fd);
 
 /* Project 3 and optionally project 4. */
 mapid_t mmap (int fd, void *addr);
@@ -88,14 +87,55 @@ static int get_user_byte (const uint8_t *uaddr);
 static bool user_memory_check (void *uaddr, int bytes);
 static bool user_string_memory_check (char *uaddr);
 
-static int fd_pool;
-
 static struct file_descriptor *find_file_with_fd (struct list *list, int fd);
+
+static void init_fd_pool (void);
+static int get_fd (void);
+static void recycle_fd (int old_fd);
+
+#define MAX_FILE 128
+static int fd_pool[MAX_FILE];
+static int fd_pool_top;
+
+static void
+init_fd_pool (void)
+{
+  fd_pool_top = MAX_FILE - 1;
+  for (int i = 0; i < MAX_FILE; i++)
+    fd_pool[MAX_FILE - i - 1] = i + 2;
+}
+
+static int
+get_fd (void)
+{
+  int result = -1;
+  if (fd_pool_top >= 0)
+    {
+      result = fd_pool[fd_pool_top];
+      fd_pool_top--;
+    }
+  return result;
+}
+
+static void
+recycle_fd (int old_fd)
+{
+  ASSERT (old_fd < MAX_FILE + 2);
+  ASSERT (fd_pool_top < MAX_FILE);
+  fd_pool[fd_pool_top] = old_fd;
+  fd_pool_top++;
+}
 
 void
 halt (void)
 {
   shutdown_power_off ();
+}
+
+int 
+valid_fd_num (void)
+{
+  return fd_pool_top;
 }
 
 void
@@ -142,6 +182,9 @@ open (const char *file_name)
 {
   struct file *file = NULL;
   struct file_descriptor *file_opened;
+  file_opened = palloc_get_page (0);
+  if (file_opened == NULL)
+    return -1;
   lock_acquire (&filesys_lock);
   file = filesys_open (file_name);
   lock_release (&filesys_lock);
@@ -149,14 +192,12 @@ open (const char *file_name)
     return -1;
   else
     {
-      // file_opened = (struct file_descriptor *)malloc (
-      //     sizeof (struct file_descriptor));
-      file_opened = palloc_get_page (0);
-      if (file_opened == NULL)
-        exit (-1);
+      int new_fd = get_fd ();
+      // Kernel can open MAX_FILE files in total at most
+      if (new_fd < 0)
+        return -1;
       lock_acquire (&filesys_lock);
-      file_opened->fd = fd_pool;
-      fd_pool++;
+      file_opened->fd = new_fd;
       file_opened->file = file;
       list_push_back (&thread_current ()->file_list, &file_opened->file_elem);
       lock_release (&filesys_lock);
@@ -273,6 +314,9 @@ tell (int fd)
 void
 close (int fd)
 {
+  /* User cannot close stdin or stdout. */
+  if (fd == STDIN || fd == STDOUT)
+    exit (-1);
   struct file_descriptor *f = NULL;
   lock_acquire (&filesys_lock);
   f = find_file_with_fd (&thread_current ()->file_list, fd);
@@ -283,6 +327,8 @@ close (int fd)
     }
   else
     {
+      int old_fd = f->fd;
+      recycle_fd (old_fd);
       list_remove (&f->file_elem);
       file_close (f->file);
       palloc_free_page (f);
@@ -467,7 +513,7 @@ syscall_init (void)
   // init file_list
   // list_init (&thread_current ()->file_list);
   // exclude STDIN / STDOUT
-  fd_pool = 2;
+  init_fd_pool ();
 }
 
 static void
