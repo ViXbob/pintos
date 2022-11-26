@@ -67,16 +67,21 @@ process_execute (const char *file_name)
   struct semaphore sema_pcb;
 
   /* Palloc memory for variable. */ 
-  child_process = palloc_get_page(PAL_ZERO);
+  // child_process = palloc_get_page(PAL_ZERO);
+  child_process = malloc (sizeof (struct process_status));
   if (child_process == NULL)
     goto palloc_failed;
+
+  size_t file_name_length = strlen (file_name) + 15;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (PAL_ZERO);
+  // fn_copy = palloc_get_page (PAL_ZERO);
+  fn_copy = malloc (file_name_length);
   if (fn_copy == NULL)
     goto palloc_failed;
 
-  process_name = palloc_get_page (PAL_ZERO);
+  // process_name = palloc_get_page (PAL_ZERO);
+  process_name = malloc (file_name_length);
   if (process_name == NULL)
     goto palloc_failed;
 
@@ -90,8 +95,8 @@ process_execute (const char *file_name)
   child_process->parent_thread = thread_current ();
 
   /* Copy file name. */ 
-  strlcpy (para_passing.fn_copy, file_name, PGSIZE);
-  strlcpy (process_name, file_name, PGSIZE);
+  strlcpy (para_passing.fn_copy, file_name, file_name_length - 10);
+  strlcpy (process_name, file_name, file_name_length - 10);
 
   /* Get process name. */
   process_name = strtok_r (process_name, " ", &save_ptr);
@@ -114,19 +119,24 @@ process_execute (const char *file_name)
   sema_down (para_passing.sema_fn_copy);
   // printf ("free fn_copy & process_name.\n");
   // free two temporary string
-  palloc_free_page (fn_copy);
-  palloc_free_page (process_name);
+  // palloc_free_page (fn_copy);
+  free (fn_copy);
+  // palloc_free_page (process_name);
+  free (process_name);
 
   return tid;
 
 palloc_failed:
   // printf ("If palloc error, free all of them.\n");
   if (fn_copy != NULL) 
-    palloc_free_page (fn_copy);
+    // palloc_free_page (fn_copy);
+    free (fn_copy);
   if (process_name != NULL)
-    palloc_free_page (process_name);
+    // palloc_free_page (process_name);
+    free (process_name);
   if (child_process != NULL)
-    palloc_free_page (child_process);
+    // palloc_free_page (child_process);
+    free (child_process);
   return TID_ERROR;
 }
 
@@ -151,7 +161,8 @@ start_process (void *para_passing_)
   if_.eflags = FLAG_IF | FLAG_MBS;
 
   int argc = 0;
-  char **argv = (char**) palloc_get_page(PAL_ZERO);
+  // char **argv = (char**) palloc_get_page(PAL_ZERO);
+  char **argv = (char**) malloc(MAX_PARAMETER * sizeof (char*));
 
   if (argv == NULL)
     {
@@ -162,6 +173,7 @@ start_process (void *para_passing_)
   parse_parameter (para_passing->fn_copy, &argc, (char **)argv);
 
   ASSERT (argc > 0);
+  ASSERT (argc <= MAX_PARAMETER);
 
   success = load (argv[0], &if_.eip, &if_.esp);
 
@@ -192,7 +204,9 @@ start_process (void *para_passing_)
 
   // push argument pointers into stack
   ASSERT (sizeof (char *) == WORD_BYTE);
-  for (int index = argc; index >= 0; index--)
+  if_.esp -= sizeof (char *);
+  *((char **)if_.esp) = NULL;
+  for (int index = argc - 1; index >= 0; index--)
     {
       if_.esp -= sizeof (char *);
       *((char **)if_.esp) = argv[index];
@@ -220,7 +234,8 @@ start_process (void *para_passing_)
 
 memory_error:
   if (argv != NULL)
-    palloc_free_page (argv);
+    // palloc_free_page (argv);
+    free (argv);
 
   para_passing->pcb->pid = thread_current ()->tid;
 
@@ -275,7 +290,8 @@ process_wait (tid_t child_tid)
   lock_release (&find_process.pcb->lock_exit_status);
   // Free child process's pcb & IMPORTANT !!!
   list_remove (&find_process.pcb->process_elem);
-  palloc_free_page (find_process.pcb);
+  // palloc_free_page (find_process.pcb);
+  free (find_process.pcb);
   // printf("%s out wait: %d, child process status is %d\n", thread_name(), list_size (&thread_current ()->child_process_list), process_status);
   return process_status;
 }

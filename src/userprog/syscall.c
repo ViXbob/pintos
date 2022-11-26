@@ -182,7 +182,8 @@ open (const char *file_name)
 {
   struct file *file = NULL;
   struct file_descriptor *file_opened;
-  file_opened = palloc_get_page (0);
+  // file_opened = palloc_get_page (0);
+  file_opened = malloc (sizeof (struct file_descriptor));
   if (file_opened == NULL)
     return -1;
   lock_acquire (&filesys_lock);
@@ -331,7 +332,8 @@ close (int fd)
       recycle_fd (old_fd);
       list_remove (&f->file_elem);
       file_close (f->file);
-      palloc_free_page (f);
+      // palloc_free_page (f);
+      free (f);
       lock_release (&filesys_lock);
     }
 }

@@ -396,7 +396,8 @@ thread_exit (void)
           if (died)
             {
               lock_release (&child_process->lock_exit_status);
-              palloc_free_page (child_process);
+              // palloc_free_page (child_process);
+              free (child_process);
             }
         }
     }
@@ -426,7 +427,8 @@ thread_exit (void)
 
   if (t->pcb->parent_thread == NULL)
     {
-      palloc_free_page (t->pcb);
+      // palloc_free_page (t->pcb);
+      free (t->pcb);
     }
 
 #ifdef USERPROG
