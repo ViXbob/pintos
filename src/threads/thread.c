@@ -469,7 +469,11 @@ thread_get_priority (void)
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice)
+thread_set_nice (int nice
+#ifdef USERPROG
+UNUSED
+#endif
+)
 {
 #ifndef USERPROG
   /* You should call this function with mlfqs mode disabled. */
@@ -502,6 +506,8 @@ thread_get_load_avg (void)
   /* You should call this function with mlfqs mode disabled. */
   ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (FP_MUL_MIXED (load_avg, 100));
+#else
+  return 0;
 #endif
 }
 
@@ -514,6 +520,8 @@ thread_get_recent_cpu (void)
   ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (
       FP_MUL_MIXED (thread_current ()->recent_cpu, 100));
+#else 
+  return 0;
 #endif  
 }
 
