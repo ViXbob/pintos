@@ -4,6 +4,7 @@
 #include "threads/fixed-point.h"
 #include "threads/synch.h"
 #include "userprog/process.h"
+#include "vm/page.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -103,8 +104,14 @@ struct thread
 #ifdef USERPROG
   /* Owned by userprog/process.c. */
   uint32_t *pagedir; /* Page directory. */
-#endif
-
+  /* For user process. */
+  int exit_status;                /* Exit status. */
+  struct list child_process_list; /* Child processes semaphore. */
+  struct list file_list;          /* Files current thread opened. */
+  struct file *code_file;         /* Code of this thread. */
+  struct process_status *pcb;     /* PCB pointer of current thread. */
+#else
+  /* Project 1 Thread */
   int64_t block_ticks;           /* Blocked ticks. */
   struct list_elem blocked_elem; /* List element for blocked list. */
 
@@ -118,14 +125,11 @@ struct thread
   /* For multilevel feedback queue scheduler. */
   fp recent_cpu; /* How much CPU time each process has received "recently". */
   int nice; /* Nice value that determines how "nice" the thread should be. */
+#endif
 
-  /* For user process. */
-  int exit_status;                /* Exit status. */
-  struct list child_process_list; /* Child processes semaphore. */
-  struct list file_list;          /* Files current thread opened. */
-  struct file *code_file;         /* Code of this thread. */
-  struct process_status *pcb;     /* PCB pointer of current thread. */
-
+#ifdef VM
+  sup_page_table sup_page_table;
+#endif
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
 };
@@ -145,9 +149,7 @@ typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
 void thread_block (void);
-void thread_block_with_ticks (int64_t blocked_ticks);
 void thread_unblock (struct thread *);
-void thread_unblock_check (int64_t ticks);
 
 struct thread *thread_current (void);
 tid_t thread_tid (void);
@@ -162,19 +164,25 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
-bool thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
-                          void *aux);
-bool donate_thread_cmp_priority (const struct list_elem *a,
-                                 const struct list_elem *b, void *aux);
 
 /* Function for mlfqs mode. */
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+#ifndef USERPROG
+/* Additional functions for Proj1. */
+void thread_block_with_ticks (int64_t blocked_ticks);
+void thread_unblock_check (int64_t ticks);
+bool thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
+                          void *aux);
+bool donate_thread_cmp_priority (const struct list_elem *a,
+                                 const struct list_elem *b, void *aux);
 void thread_update_load_avg (void);
 void thread_update_recent_cpu (struct thread *t, void *aux);
 void thread_update_priority (struct thread *t, void *aux);
 int ready_threads (void);
+#endif
 
 #endif /* threads/thread.h */

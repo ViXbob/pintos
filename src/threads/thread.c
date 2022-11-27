@@ -13,8 +13,8 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-#include "userprog/syscall.h"
 #ifdef USERPROG
+#include "userprog/syscall.h"
 #include "userprog/process.h"
 #endif
 
@@ -31,10 +31,12 @@ static struct list ready_list;
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
+#ifndef USERPROG
 /* List of processes in THREAD_BLOCKED state and with blocked ticks,
    that is, processes that are blocked by I/O or other events. And
    blocked list is always sorted by blocked_ticks. */
 static struct list blocked_list;
+#endif
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -62,8 +64,10 @@ static long long user_ticks;   /* # of timer ticks in user programs. */
 #define TIME_SLICE 4          /* # of timer ticks to give each thread. */
 static unsigned thread_ticks; /* # of timer ticks since last yield. */
 
+#ifndef USERPROG
 /* Multilevel feedback queue scheduling. */
 static fp load_avg; /* # of average system load. */
+#endif
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -81,8 +85,10 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
+#ifndef USERPROG
 static void insert_blocked_list (struct thread *);
-// static int ready_threads (void);
+#endif
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -106,11 +112,13 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
 
+#ifndef USERPROG
   /* Set up information for blocking list. */
   list_init (&blocked_list);
 
   /* Set load_avg to zero. */
   load_avg = 0;
+#endif
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -220,8 +228,10 @@ thread_create (const char *name, int priority, thread_func *function,
   /* Add to run queue. */
   thread_unblock (t);
 
+#ifndef USERPROG
   if (!thread_mlfqs)
     thread_yield ();
+#endif
 
   return tid;
 }
@@ -240,56 +250,6 @@ thread_block (void)
 
   thread_current ()->status = THREAD_BLOCKED;
   schedule ();
-}
-
-/* Puts the current thread to sleep with blocking ticks.
-   It will be scheduled again until blocking ticks elapsed.
-
-   This function must be called with interrupts turned off. */
-void
-thread_block_with_ticks (int64_t blocked_ticks)
-{
-  struct thread *t;
-  ASSERT (!intr_context ());
-  ASSERT (intr_get_level () == INTR_OFF);
-
-  t = thread_current ();
-  t->status = THREAD_BLOCKED;
-  t->block_ticks = blocked_ticks;
-
-  insert_blocked_list (t);
-  schedule ();
-}
-
-/* This function will only be called by thread_block_with_ticks.
-   inserting_t which must equal to thread_current() will be inserted
-   into blocked_list with the order maintained. Complexity is O(n).
-   This function must be called with interrupts turned off. */
-static void
-insert_blocked_list (struct thread *inserting_t)
-{
-  struct list_elem *e;
-
-  ASSERT (intr_get_level () == INTR_OFF);
-
-  if (list_empty (&blocked_list))
-    {
-      list_push_front (&blocked_list, &inserting_t->blocked_elem);
-    }
-  else
-    {
-      for (e = list_begin (&blocked_list); e != list_end (&blocked_list);
-           e = list_next (e))
-        {
-          struct thread *t = list_entry (e, struct thread, blocked_elem);
-          if (t->block_ticks >= inserting_t->block_ticks)
-            {
-              list_insert (e, &inserting_t->blocked_elem);
-              return;
-            }
-        }
-      list_push_back (&blocked_list, &inserting_t->blocked_elem);
-    }
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -312,33 +272,6 @@ thread_unblock (struct thread *t)
   list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
-}
-
-/* Called by the timer interrupt handler at each timer tick.
-   Thus, this function runs in an external interrupt context.
-   This function will check blocked_list and pop threads whose
-   blocked_ticks is not greater than ticks.
-   This function must be called with interrupts turned off. */
-void
-thread_unblock_check (int64_t ticks)
-{
-  struct list_elem *e;
-  struct thread *t;
-
-  while (!list_empty (&blocked_list))
-    {
-      e = list_front (&blocked_list);
-      t = list_entry (e, struct thread, blocked_elem);
-      if (t->block_ticks <= ticks)
-        {
-          list_pop_front (&blocked_list);
-          thread_unblock (t);
-        }
-      else
-        {
-          break;
-        }
-    }
 }
 
 /* Returns the name of the running thread. */
@@ -381,6 +314,7 @@ thread_exit (void)
 {
   ASSERT (!intr_context ());
 
+#ifdef USERPROG
   struct thread *t = thread_current ();
   ATOM 
     {
@@ -431,7 +365,6 @@ thread_exit (void)
       free (t->pcb);
     }
 
-#ifdef USERPROG
   process_exit ();
 #endif
 
@@ -456,7 +389,6 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-
   if (cur != idle_thread)
     list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
@@ -481,28 +413,11 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
-/* Comparing funtion thread priority for lists holding elem. */
-bool
-thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
-                     void *aux UNUSED)
-{
-  return list_entry (a, struct thread, elem)->priority
-         < list_entry (b, struct thread, elem)->priority;
-}
-
-/* Comparing funtion thread priority for lists holding donate_elem. */
-bool
-donate_thread_cmp_priority (const struct list_elem *a,
-                            const struct list_elem *b, void *aux UNUSED)
-{
-  return list_entry (a, struct thread, donate_elem)->priority
-         < list_entry (b, struct thread, donate_elem)->priority;
-}
-
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority)
 {
+#ifndef USERPROG
   int max_priority;
   enum intr_level old_level;
 
@@ -528,12 +443,16 @@ thread_set_priority (int new_priority)
 
   thread_yield ();
   intr_set_level (old_level);
+#else
+  thread_current ()->priority = new_priority;
+#endif
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void)
 {
+#ifndef USERPROG
   if (thread_mlfqs)
     return clamp_pri (FP_ROUND_TO_NEAREASET (
         FP_INT_TO_FP (PRI_MAX)
@@ -541,46 +460,59 @@ thread_get_priority (void)
         - FP_MUL_MIXED (FP_INT_TO_FP (thread_current ()->nice), 2)));
   else
     return thread_current ()->priority;
+#else
+  return thread_current ()->priority;
+#endif
 }
 
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice)
 {
+#ifndef USERPROG
   /* You should call this function with mlfqs mode disabled. */
   ASSERT (thread_mlfqs);
 
   thread_current ()->nice = nice;
   thread_update_priority (thread_current (), NULL);
   thread_yield ();
+#endif
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void)
 {
+#ifndef USERPROG
   /* You should call this function with mlfqs mode disabled. */
   ASSERT (thread_mlfqs);
   return thread_current ()->nice;
+#else
+  return 0;
+#endif
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void)
 {
+#ifndef USERPROG
   /* You should call this function with mlfqs mode disabled. */
   ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (FP_MUL_MIXED (load_avg, 100));
+#endif
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void)
 {
+#ifndef USERPROG
   /* You should call this function with mlfqs mode disabled. */
   ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (
       FP_MUL_MIXED (thread_current ()->recent_cpu, 100));
+#endif  
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -668,6 +600,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *)t + PGSIZE;
+#ifndef USERPROG
   if (thread_mlfqs)
     thread_update_priority (t, NULL);
   else
@@ -678,13 +611,15 @@ init_thread (struct thread *t, const char *name, int priority)
   t->holder = NULL;
   t->recent_cpu = 0;
   t->nice = 0;
-
+#else
+  t->priority = priority;
   /* For user process. */
   list_init (&t->child_process_list);
   list_init (&t->file_list);
   t->exit_status = -1;
   t->code_file = NULL;
   t->pcb = NULL;
+#endif
 
   t->magic = THREAD_MAGIC;
 
@@ -713,14 +648,18 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void)
 {
-  struct list_elem *e;
   if (list_empty (&ready_list))
     return idle_thread;
   else
     {
+#ifndef USERPROG
+      struct list_elem *e;
       e = list_max (&ready_list, thread_cmp_priority, NULL);
       list_remove (e);
       return list_entry (e, struct thread, elem);
+#else
+      return list_entry (list_pop_front (&ready_list), struct thread, elem);
+#endif
     }
 }
 
@@ -811,6 +750,104 @@ allocate_tid (void)
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 
+#ifndef USERPROG
+/* Additional functions for Proj 1. */
+
+/* Puts the current thread to sleep with blocking ticks.
+   It will be scheduled again until blocking ticks elapsed.
+
+   This function must be called with interrupts turned off. */
+void
+thread_block_with_ticks (int64_t blocked_ticks)
+{
+  struct thread *t;
+  ASSERT (!intr_context ());
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  t = thread_current ();
+  t->status = THREAD_BLOCKED;
+  t->block_ticks = blocked_ticks;
+
+  insert_blocked_list (t);
+  schedule ();
+}
+
+/* This function will only be called by thread_block_with_ticks.
+   inserting_t which must equal to thread_current() will be inserted
+   into blocked_list with the order maintained. Complexity is O(n).
+   This function must be called with interrupts turned off. */
+static void
+insert_blocked_list (struct thread *inserting_t)
+{
+  struct list_elem *e;
+
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  if (list_empty (&blocked_list))
+    {
+      list_push_front (&blocked_list, &inserting_t->blocked_elem);
+    }
+  else
+    {
+      for (e = list_begin (&blocked_list); e != list_end (&blocked_list);
+           e = list_next (e))
+        {
+          struct thread *t = list_entry (e, struct thread, blocked_elem);
+          if (t->block_ticks >= inserting_t->block_ticks)
+            {
+              list_insert (e, &inserting_t->blocked_elem);
+              return;
+            }
+        }
+      list_push_back (&blocked_list, &inserting_t->blocked_elem);
+    }
+}
+
+/* Called by the timer interrupt handler at each timer tick.
+   Thus, this function runs in an external interrupt context.
+   This function will check blocked_list and pop threads whose
+   blocked_ticks is not greater than ticks.
+   This function must be called with interrupts turned off. */
+void
+thread_unblock_check (int64_t ticks)
+{
+  struct list_elem *e;
+  struct thread *t;
+
+  while (!list_empty (&blocked_list))
+    {
+      e = list_front (&blocked_list);
+      t = list_entry (e, struct thread, blocked_elem);
+      if (t->block_ticks <= ticks)
+        {
+          list_pop_front (&blocked_list);
+          thread_unblock (t);
+        }
+      else
+        {
+          break;
+        }
+    }
+}
+
+/* Comparing funtion thread priority for lists holding elem. */
+bool
+thread_cmp_priority (const struct list_elem *a, const struct list_elem *b,
+                     void *aux UNUSED)
+{
+  return list_entry (a, struct thread, elem)->priority
+         < list_entry (b, struct thread, elem)->priority;
+}
+
+/* Comparing funtion thread priority for lists holding donate_elem. */
+bool
+donate_thread_cmp_priority (const struct list_elem *a,
+                            const struct list_elem *b, void *aux UNUSED)
+{
+  return list_entry (a, struct thread, donate_elem)->priority
+         < list_entry (b, struct thread, donate_elem)->priority;
+}
+
 /* Update average system load every second. */
 void
 thread_update_load_avg (void)
@@ -856,3 +893,4 @@ thread_update_priority (struct thread *t, void *aux UNUSED)
           - FP_MUL_MIXED (FP_INT_TO_FP (t->nice), 2)));
     }
 }
+#endif
