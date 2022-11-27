@@ -2,12 +2,18 @@
 #define THREADS_THREAD_H
 
 #include "threads/fixed-point.h"
-#include "threads/synch.h"
-#include "userprog/process.h"
-#include "vm/page.h"
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+
+#ifdef USERPROG
+#include "threads/synch.h"
+#include "userprog/process.h"
+#endif
+
+#ifdef VM
+#include "vm/page.h"
+#endif
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -182,7 +188,6 @@ bool donate_thread_cmp_priority (const struct list_elem *a,
 void thread_update_load_avg (void);
 void thread_update_recent_cpu (struct thread *t, void *aux);
 void thread_update_priority (struct thread *t, void *aux);
-int ready_threads (void);
 #endif
 
 #endif /* threads/thread.h */

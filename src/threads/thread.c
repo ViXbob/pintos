@@ -3,17 +3,18 @@
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
 #include "threads/palloc.h"
-#include "threads/malloc.h"
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
-#include "filesys/file.h"
 #include <debug.h>
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+
 #ifdef USERPROG
+#include "threads/malloc.h"
+#include "filesys/file.h"
 #include "userprog/syscall.h"
 #include "userprog/process.h"
 #endif
@@ -88,6 +89,7 @@ static tid_t allocate_tid (void);
 
 #ifndef USERPROG
 static void insert_blocked_list (struct thread *);
+static int ready_threads (void);
 #endif
 
 /* Initializes the threading system by transforming the code
