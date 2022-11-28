@@ -34,7 +34,6 @@ void close (int fd);
 
 /* You should use synchronization to ensure that only one
    process at a time is executing file system code. */
-struct lock filesys_lock;
 int valid_fd_num (void);
 
 

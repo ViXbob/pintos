@@ -43,6 +43,8 @@ static syscall_handler_func syscall_handler;
 static syscall_handler_func
     *syscall_handlers[SYSCALL_NUM]; // array of all system calls
 
+struct lock filesys_lock;
+
 /* Projects 2 and later. */
 void halt (void) NO_RETURN;
 void exit (int status) NO_RETURN;
