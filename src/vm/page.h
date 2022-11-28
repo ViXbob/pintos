@@ -42,7 +42,8 @@ void sup_page_table_init (sup_page_table *sup_page_table);
 /* Destory function for single supplementary page table entry. */
 void sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED);
 
-/* Free supplementary page table. */
+/* Free supplementary page table.Free all supplementary page table entries and
+ * the memory allocated by sup_page_table_init. */
 void sup_page_table_free (sup_page_table *sup_page_table);
 
 /* Allocate and initialize a supplementary page table entry. */

@@ -46,14 +46,14 @@ sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
 {
   struct sup_page_table_entry *sup_page_table_entry
       = hash_entry (e, struct sup_page_table_entry, elem);
-  
+
   free (sup_page_table_entry);
 }
 
 void
 sup_page_table_free (sup_page_table *sup_page_table)
 {
-  hash_clear (sup_page_table, sup_page_table_entry_free_func);
+  hash_destroy (sup_page_table, sup_page_table_entry_free_func);
 }
 
 struct sup_page_table_entry *
