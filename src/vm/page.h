@@ -55,6 +55,6 @@ bool try_to_get_page (void *fault_addr);
 bool grow_stack (void *fault_addr);
 
 /* Load page from file. */
-bool load_from_file (void *addr, struct sup_page_table_entry *entry);
+bool load_from_file (struct sup_page_table_entry *entry);
 
 #endif /* vm/page.h */

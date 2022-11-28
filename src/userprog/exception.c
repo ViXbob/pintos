@@ -150,7 +150,8 @@ page_fault (struct intr_frame *f)
 
   if (!user)
     {
-      f->eip = f->eax;
+      typedef void (*__VOID_FUNCTION) (void);
+      f->eip = (__VOID_FUNCTION)f->eax;
       f->eax = -1;
       return;
     }

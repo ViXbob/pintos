@@ -1,12 +1,14 @@
 #include "page.h"
-#include "devices/timer.h"
-#include "filesys/file.h"
 #include "frame.h"
 #include "swap.h"
+#include "devices/timer.h"
+#include "filesys/file.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #include "userprog/pagedir.h"
 #include <hash.h>
+#include <string.h>
 
 extern struct lock filesys_lock;
 extern bool install_page (void *, void *, bool);
@@ -35,7 +37,7 @@ sup_page_table_less_func (const struct hash_elem *a, const struct hash_elem *b,
 void
 sup_page_table_init (sup_page_table *sup_page_table)
 {
-  hash_init (&sup_page_table, sup_page_table_hash_func,
+  hash_init (sup_page_table, sup_page_table_hash_func,
              sup_page_table_less_func, NULL);
 }
 
@@ -44,8 +46,8 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
 {
   /* Allocate memory for new supplementary page table entry. You must free it
    * properly. */
-  struct sup_page_table_entry *entry
-      = malloc (sizeof (struct sup_page_table_entry));
+  struct sup_page_table_entry *entry = (struct sup_page_table_entry *)malloc (
+      sizeof (struct sup_page_table_entry));
 
   /* Mlloc failed. */
   if (entry == NULL)
@@ -99,11 +101,11 @@ try_to_get_page (void *fault_addr)
   /* Page is not found, grow stack. */
   if (entry == NULL)
     {
-      return grwo_stack (fault_addr);
+      return grow_stack (fault_addr);
     }
   else if (entry->from_file)
     {
-      return load_from_file (fault_addr, entry);
+      return load_from_file (entry);
     }
   else if (entry->swap_index != NOT_IN_SWAP)
     {
@@ -165,7 +167,7 @@ grow_stack (void *fault_addr)
 }
 
 bool
-load_from_file (void *addr, struct sup_page_table_entry *sup_page_table_entry)
+load_from_file (struct sup_page_table_entry *sup_page_table_entry)
 {
   struct frame_table_entry *frame_table_entry
       = frame_get_page (sup_page_table_entry);
