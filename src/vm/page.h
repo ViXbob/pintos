@@ -39,6 +39,12 @@ bool sup_page_table_less_func (const struct hash_elem *a,
 /* Initialize supplemenatry page table. */
 void sup_page_table_init (sup_page_table *sup_page_table);
 
+/* Destory function for single supplementary page table entry. */
+void sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED);
+
+/* Free supplementary page table. */
+void sup_page_table_free (sup_page_table *sup_page_table);
+
 /* Allocate and initialize a supplementary page table entry. */
 struct sup_page_table_entry *new_sup_page_table_entry (void *addr,
                                                        uint64_t access_time);
@@ -56,5 +62,11 @@ bool grow_stack (void *fault_addr);
 
 /* Load page from file. */
 bool load_from_file (struct sup_page_table_entry *entry);
+
+/* Lazy load content from file, only create sup page table without allocate
+ * memory for it. Lazy version of process.c:load_segment. */
+bool lazy_load_segment (struct file *file, int32_t ofs, uint8_t *upage,
+                        uint32_t read_bytes, uint32_t zero_bytes,
+                        bool writable, bool is_mmap);
 
 #endif /* vm/page.h */

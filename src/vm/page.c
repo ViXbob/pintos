@@ -1,11 +1,11 @@
 #include "page.h"
-#include "frame.h"
-#include "swap.h"
 #include "devices/timer.h"
 #include "filesys/file.h"
+#include "frame.h"
+#include "swap.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#include "threads/malloc.h"
 #include "userprog/pagedir.h"
 #include <hash.h>
 #include <string.h>
@@ -39,6 +39,21 @@ sup_page_table_init (sup_page_table *sup_page_table)
 {
   hash_init (sup_page_table, sup_page_table_hash_func,
              sup_page_table_less_func, NULL);
+}
+
+void
+sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
+{
+  struct sup_page_table_entry *sup_page_table_entry
+      = hash_entry (e, struct sup_page_table_entry, elem);
+  
+  free (sup_page_table_entry);
+}
+
+void
+sup_page_table_free (sup_page_table *sup_page_table)
+{
+  hash_clear (sup_page_table, sup_page_table_entry_free_func);
 }
 
 struct sup_page_table_entry *
@@ -212,5 +227,56 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
     }
 
   lock_release (&sup_page_table_entry->lock);
+  return true;
+}
+
+bool
+lazy_load_segment (struct file *file, int32_t ofs, uint8_t *upage,
+                   uint32_t read_bytes, uint32_t zero_bytes, bool writable,
+                   bool is_mmap)
+{
+  int32_t offset = ofs;
+  while (read_bytes > 0 || zero_bytes > 0)
+    {
+      /* Calculate how to fill this page.
+         We will read PAGE_READ_BYTES bytes from FILE
+         and zero the final PAGE_ZERO_BYTES bytes. */
+      size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+      size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+      /* Create new supplementary page table entry. */
+      struct sup_page_table_entry *sup_page_table_entry
+          = new_sup_page_table_entry (upage, timer_ticks ());
+
+      if (sup_page_table_entry == NULL)
+        return false;
+
+      /* Used for file load. */
+      sup_page_table_entry->from_file = true;
+      sup_page_table_entry->file = file;
+      sup_page_table_entry->offset = offset;
+      sup_page_table_entry->read_bytes = page_read_bytes;
+      sup_page_table_entry->zero_bytes = page_zero_bytes;
+      sup_page_table_entry->writable = writable;
+
+      /* Used for mmap. */
+      sup_page_table_entry->is_mmap = is_mmap;
+
+      /* Fail to insert into hash table. */
+      if (hash_insert (&thread_current ()->sup_page_table,
+                       &sup_page_table_entry->elem)
+          == NULL)
+        {
+          free (sup_page_table_entry);
+          return false;
+        }
+
+      /* Advance. */
+      offset += PGSIZE;
+      read_bytes -= page_read_bytes;
+      zero_bytes -= page_zero_bytes;
+      upage += PGSIZE;
+    }
+
   return true;
 }
