@@ -41,7 +41,6 @@ new_frame_table_entry (void *frame_addr, struct thread *onwer,
   return entry;
 }
 
-/* Get a new frame page. */
 struct frame_table_entry *
 frame_get_page (struct sup_page_table_entry *sup_page_table_entry)
 {
@@ -79,7 +78,7 @@ frame_get_page (struct sup_page_table_entry *sup_page_table_entry)
 }
 
 void
-frame_table_foreach_if (frame_table_entry_action_func *action_func, void *aux)
+frame_table_foreach (frame_table_entry_action_func *action_func, void *aux)
 {
   struct list_elem *e;
 

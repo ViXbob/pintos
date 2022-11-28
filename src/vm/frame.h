@@ -25,7 +25,7 @@ struct frame_table_entry *
 frame_get_page (struct sup_page_table_entry *sup_page_table_entry);
 
 /* Action function for foreach function. The return value will control the loop. */
-typedef bool frame_table_entry_action_func(struct frame_table_entry*, void *);
+typedef bool frame_table_entry_action_func (struct frame_table_entry*, void *);
 
 /* For each element in frame table, and do some actions. */
 void frame_table_foreach (frame_table_entry_action_func *action_func, void *aux);
