@@ -8,6 +8,7 @@
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 #include <hash.h>
+#include <stdio.h>
 #include <string.h>
 
 extern struct lock filesys_lock;
@@ -103,7 +104,7 @@ find_entry (sup_page_table *table, void *target_addr)
 }
 
 bool
-try_to_get_page (void *fault_addr)
+try_to_get_page (void *fault_addr, void *esp)
 {
   /* Null address. */
   if (fault_addr == NULL)
@@ -116,6 +117,10 @@ try_to_get_page (void *fault_addr)
   /* Page is not found, grow stack. */
   if (entry == NULL)
     {
+      /* This address does not appear to be a stack access. */
+      if (fault_addr < esp - 32)
+        return false;
+
       return grow_stack (fault_addr);
     }
   else if (entry->from_file)
@@ -262,17 +267,19 @@ lazy_load_segment (struct file *file, int32_t ofs, uint8_t *upage,
       /* Used for mmap. */
       sup_page_table_entry->is_mmap = is_mmap;
 
-      /* Fail to insert into hash table. */
+      /* Fail to insert into hash table. There has already been a supplementary
+       * page table entry with same user address. This means that the return
+       * value of hash_insert is non-empty. */
       if (hash_insert (&thread_current ()->sup_page_table,
                        &sup_page_table_entry->elem)
-          == NULL)
+          != NULL)
         {
           free (sup_page_table_entry);
           return false;
         }
 
       /* Advance. */
-      offset += PGSIZE;
+      offset += page_read_bytes;
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;

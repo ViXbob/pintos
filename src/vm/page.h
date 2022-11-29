@@ -56,7 +56,7 @@ struct sup_page_table_entry *find_entry (sup_page_table *table,
 
 /* Try to get a page at fault address. From file or swap or for growing stack.
  */
-bool try_to_get_page (void *fault_addr);
+bool try_to_get_page (void *fault_addr, void *esp);
 
 /* Grow stack. */
 bool grow_stack (void *fault_addr);
