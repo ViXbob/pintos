@@ -14,6 +14,10 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 
+#ifdef VM
+#include "vm/page.h"
+#endif
+
 /* Process identifier. */
 typedef int pid_t;
 #define PID_ERROR ((pid_t)-1)
@@ -42,6 +46,8 @@ typedef void syscall_handler_func (struct intr_frame *f);
 static syscall_handler_func syscall_handler;
 static syscall_handler_func
     *syscall_handlers[SYSCALL_NUM]; // array of all system calls
+
+static void *now_esp;
 
 struct lock filesys_lock;
 
@@ -525,6 +531,7 @@ syscall_handler (struct intr_frame *f)
 {
   if (!user_memory_check (f->esp, 4))
     exit (-1);
+  now_esp = f->esp;
   uint32_t syscall_num = *((uint32_t *)f->esp);
   if (syscall_num >= SYSCALL_NUM)
     exit (-1);
@@ -538,9 +545,14 @@ syscall_handler (struct intr_frame *f)
 static int
 get_user_byte (const uint8_t *uaddr)
 {
-  int result;
-  asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
-  return result;
+  // int result;
+  // asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
+  // return result;
+
+  if (uaddr == NULL || !is_user_vaddr (uaddr) || uaddr < (uint8_t *)0x08048000)
+    return -1;
+  
+  return *uaddr;
 }
 
 /* Writes BYTE to user address UDST.
@@ -569,8 +581,20 @@ user_memory_check (void *uaddr, int bytes)
 
   for (int i = 0; i < bytes; i++)
     {
-      if (pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
+      if (!is_user_vaddr (uaddr + i))
         return false;
+
+      /* Page is not present. */
+      if (pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
+        {
+#ifdef VM
+          if (!try_to_get_page (uaddr + i, now_esp))
+            return false;
+#else
+          return false;
+#endif
+        }
+        
       if (get_user_byte ((uint8_t *)(uaddr + i)) == -1)
         {
           intr_set_level (old_level);
@@ -586,14 +610,22 @@ user_string_memory_check (char *uaddr)
 {
   enum intr_level old_level;
   old_level = intr_disable ();
-  for (int i = 0;; i++)
+  for (int i = 0; ;i++)
     {
-      if (((void *)uaddr + i) >= PHYS_BASE
-          || pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
+      if (!is_user_vaddr (uaddr + i))
+        return false;
+
+      /* Page is not present. */
+      if (pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
         {
-          intr_set_level (old_level);
+#ifdef VM
+          if (!try_to_get_page (uaddr + i, now_esp))
+            return false;
+#else
           return false;
+#endif
         }
+
       int value = get_user_byte ((uint8_t *)(uaddr + i));
       if (value == 0 || value == -1)
         {
