@@ -16,12 +16,12 @@ void swap_destory (void);
 void swap_release_slot (int sector_index);
 
 /* Read a frame frow disk and then realse it. */
-void read_frame_from_block (struct frame_table_entry *frame, int sector_index);
+void read_frame_from_block (struct frame_table_entry *frame_table_entry, int sector_index);
 
 /* Get a new swap slot. */
 int get_new_swap_slot (void);
 
 /* Write a frame frow disk. */
-void write_frame_to_block (struct frame_table_entry *frame);
+void write_frame_to_block (struct frame_table_entry *frame_table_entry);
 
 #endif /* vm/swap.h */
