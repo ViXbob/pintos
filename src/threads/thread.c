@@ -68,6 +68,8 @@ static unsigned thread_ticks; /* # of timer ticks since last yield. */
 #ifndef USERPROG
 /* Multilevel feedback queue scheduling. */
 static fp load_avg; /* # of average system load. */
+#else
+  extern struct lock filesys_lock;
 #endif
 
 /* If false (default), use round-robin scheduler.
@@ -336,6 +338,11 @@ thread_exit (void)
               free (child_process);
             }
         }
+    }
+
+  if (filesys_lock.holder == thread_current ())
+    {
+      lock_release (&filesys_lock);
     }
 
   // close all file this process opened
