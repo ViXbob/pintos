@@ -14,6 +14,7 @@ struct sup_page_table_entry
   void *addr;            /* Virtual address. */
   uint64_t access_time;  /* Lastest time the page is accessed. Used for LRU. */
   struct hash_elem elem; /* Hash table element. */
+  bool writable;         /* Whether this page can be written. */
   /* Used for swap. */
   int swap_index; /* Index of the beginning sector in swap file. */
   /* Used for file load. */
@@ -22,37 +23,17 @@ struct sup_page_table_entry
   int32_t offset;      /* File offset. */
   uint32_t read_bytes; /* Number of bytes read from file. */
   uint32_t zero_bytes; /* Number of zero bytes at the end of page. */
-  bool writable;       /* Whether this page can be written. */
   /* Used for mmap. */
   bool is_mmap;     /* Whether this page is mmap. */
   struct lock lock; /* Page lock. */
 };
 
-/* Hash function of supplementary page table. */
-unsigned sup_page_table_hash_func (const struct hash_elem *e,
-                                   void *aux UNUSED);
-
-/* Less function of supplementary page table. */
-bool sup_page_table_less_func (const struct hash_elem *a,
-                               const struct hash_elem *b, void *aux UNUSED);
-
 /* Initialize supplemenatry page table. */
 void sup_page_table_init (sup_page_table *sup_page_table);
-
-/* Destory function for single supplementary page table entry. */
-void sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED);
 
 /* Free supplementary page table.Free all supplementary page table entries and
  * the memory allocated by sup_page_table_init. */
 void sup_page_table_free (sup_page_table *sup_page_table);
-
-/* Allocate and initialize a supplementary page table entry. */
-struct sup_page_table_entry *new_sup_page_table_entry (void *addr,
-                                                       uint64_t access_time);
-
-/* Find entry with specific virtual address. */
-struct sup_page_table_entry *find_entry (sup_page_table *table,
-                                         void *target_addr);
 
 /* Try to get a page at fault address. From file or swap or for growing stack.
  */
@@ -61,11 +42,6 @@ bool try_to_get_page (void *fault_addr, void *esp);
 /* Grow stack. */
 bool grow_stack (void *fault_addr);
 
-/* Load page from file. */
-bool load_from_file (struct sup_page_table_entry *entry);
-
-/* Lazy load content from file, only create sup page table without allocate
- * memory for it. Lazy version of process.c:load_segment. */
 bool lazy_load_segment (struct file *file, int32_t ofs, uint8_t *upage,
                         uint32_t read_bytes, uint32_t zero_bytes,
                         bool writable, bool is_mmap);

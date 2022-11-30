@@ -14,6 +14,31 @@
 extern struct lock filesys_lock;
 extern bool install_page (void *, void *, bool);
 
+/* Hash function of supplementary page table. */
+unsigned sup_page_table_hash_func (const struct hash_elem *e,
+                                   void *aux UNUSED);
+
+/* Less function of supplementary page table. */
+bool sup_page_table_less_func (const struct hash_elem *a,
+                               const struct hash_elem *b, void *aux UNUSED);
+
+/* Destory function for single supplementary page table entry. */
+void sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED);
+
+/* Allocate and initialize a supplementary page table entry. */
+struct sup_page_table_entry *new_sup_page_table_entry (void *addr,
+                                                       uint64_t access_time);
+
+/* Find entry with specific virtual address. */
+struct sup_page_table_entry *find_entry (sup_page_table *table,
+                                         void *target_addr);
+
+/* Load page from file. */
+bool load_from_file (struct sup_page_table_entry *sup_page_table_entry);
+
+/* Load page from swap partition. */
+bool load_from_swap (struct sup_page_table_entry *sup_page_table_entry);
+
 unsigned
 sup_page_table_hash_func (const struct hash_elem *e, void *aux UNUSED)
 {
@@ -81,6 +106,7 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
   entry->writable = false;
   entry->is_mmap = false;
   lock_init (&entry->lock);
+  // printf ("address of sup_page_table_entry_lock is %p.\n", &entry->lock);
   return entry;
 }
 
@@ -106,6 +132,8 @@ find_entry (sup_page_table *table, void *target_addr)
 bool
 try_to_get_page (void *fault_addr, void *esp)
 {
+  ASSERT (is_user_vaddr (fault_addr));
+
   /* Null address. */
   if (fault_addr == NULL)
     return false;
@@ -130,7 +158,7 @@ try_to_get_page (void *fault_addr, void *esp)
   else if (entry->swap_index != NOT_IN_SWAP)
     {
       /* Have not implemented swap yet.*/
-      NOT_REACHED ();
+      return load_from_swap (entry);
     }
   else
     {
@@ -165,21 +193,20 @@ grow_stack (void *fault_addr)
   void *kpage = frame_table_entry->frame_addr;
   void *upage = sup_page_table_entry->addr;
 
-  bool success
-      = install_page (upage, kpage, true)
-        && (hash_insert (&t->sup_page_table, &sup_page_table_entry->elem)
-            == NULL);
-
-  /* Free resources you allocated. */
-  if (!success)
+  if (!install_page (upage, kpage, true))
     {
       free (sup_page_table_entry);
       frame_free_page (kpage);
-      /* Must clear the page you may installed. */
-      pagedir_clear_page (t->pagedir, upage);
-      /* Remove the element you insert into supplementary page table. */
-      hash_delete (&t->sup_page_table, &sup_page_table_entry->elem);
+      return false;
+    }
 
+  /* Free resources you allocated. */
+  if (hash_insert (&t->sup_page_table, &sup_page_table_entry->elem) != NULL)
+    {
+      free (sup_page_table_entry);
+      frame_free_page (kpage);
+      /* Must clear the page you installed. */
+      pagedir_clear_page (t->pagedir, upage);
       return false;
     }
 
@@ -192,11 +219,11 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   struct frame_table_entry *frame_table_entry
       = frame_get_page (sup_page_table_entry);
 
+  // printf ("good get frame page!\n");
+
   /* Fail to get new frame table entry. */
   if (frame_table_entry == NULL)
     return false;
-
-  lock_acquire (&sup_page_table_entry->lock);
 
   /* Variables used for file load. */
   void *kpage = frame_table_entry->frame_addr;
@@ -207,6 +234,8 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   size_t page_zero_bytes = sup_page_table_entry->zero_bytes;
   bool writable = sup_page_table_entry->writable;
 
+  lock_acquire (&sup_page_table_entry->lock);
+  // printf ("page.c: Ready to acquire filesys\n");
   lock_acquire (&filesys_lock);
   file_seek (file, offset);
 
@@ -214,11 +243,12 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   if (file_read (file, kpage, page_read_bytes) != (int)page_read_bytes)
     {
       frame_free_page (kpage);
+      // printf ("page.c: Ready to release filesys\n");
       lock_release (&filesys_lock);
       lock_release (&sup_page_table_entry->lock);
       return false;
     }
-
+  // printf ("page.c: Ready to release filesys\n");
   lock_release (&filesys_lock);
 
   /* Set the zero bytes. */
@@ -236,10 +266,45 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
 }
 
 bool
+load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
+{
+  ASSERT (sup_page_table_entry->swap_index != NOT_IN_SWAP);
+
+  struct frame_table_entry *frame_table_entry
+      = frame_get_page (sup_page_table_entry);
+
+  /* Fail to get new frame table entry. */
+  if (frame_table_entry == NULL)
+    return false;
+
+  lock_acquire (&sup_page_table_entry->lock);
+
+  void *upage = sup_page_table_entry->addr;
+  void *kpage = frame_table_entry->frame_addr;
+  bool writable = sup_page_table_entry->writable;
+  bool success = install_page (upage, kpage, writable);
+
+  if (!success)
+    {
+      frame_free_page (kpage);
+      lock_release (&sup_page_table_entry->lock);
+      return false;
+    }
+
+  read_frame_from_block (frame_table_entry, sup_page_table_entry->swap_index);
+  sup_page_table_entry->swap_index = NOT_IN_SWAP;
+
+  lock_release (&sup_page_table_entry->lock);
+  return true;
+}
+
+bool
 lazy_load_segment (struct file *file, int32_t ofs, uint8_t *upage,
                    uint32_t read_bytes, uint32_t zero_bytes, bool writable,
                    bool is_mmap)
 {
+  ASSERT (is_user_vaddr (upage));
+
   int32_t offset = ofs;
   while (read_bytes > 0 || zero_bytes > 0)
     {
