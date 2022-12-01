@@ -16,6 +16,20 @@ struct lock frame_table_lock;
 /* Frame list which stores all frame table entries. */
 struct list frame_table_list;
 
+/* Allocate and initialize a frame table entry. */
+struct frame_table_entry *
+new_frame_table_entry (void *frame_addr, struct thread *onwer,
+                       struct sup_page_table_entry *sup_page_table_entry);
+
+/* Action function for foreach function. The return value will control the
+ * loop. */
+typedef bool frame_table_entry_action_func (struct frame_table_entry *,
+                                            void *);
+
+/* For each element in frame table, and do some actions. */
+void frame_table_foreach (frame_table_entry_action_func *action_func,
+                          void *aux);
+
 /* Foreach action function: Free frame table entry function. */
 bool free_frame_table_entry (struct frame_table_entry *entry,
                              void *target_addr);
@@ -77,16 +91,11 @@ evict_one_frame (void)
       = list_min (&frame_table_list, frame_access_time_less, NULL);
   struct frame_table_entry *frame_table_entry
       = list_entry (min_elem, struct frame_table_entry, elem);
-  // printf ("find frame to evict.\n");
   lock_acquire (&frame_table_lock);
-  frame_table_entry->sup_page_table_entry->from_file = false;
-  // printf ("write to swap.\n");
   write_frame_to_block (frame_table_entry);
-  // printf ("finish writing to swap.\n");
   pagedir_clear_page (frame_table_entry->owner->pagedir,
                       frame_table_entry->sup_page_table_entry->addr);
   lock_release (&frame_table_lock);
-  // printf ("finish evict.\n");
   return frame_table_entry;
 }
 
@@ -111,8 +120,6 @@ frame_get_page (struct sup_page_table_entry *sup_page_table_entry)
       frame_table_entry->sup_page_table_entry = sup_page_table_entry;
       lock_release (&sup_page_table_entry->lock);
 
-      // sup_page_table_entry->access_time = timer_ticks ();
-
       return frame_table_entry;
     }
 
@@ -132,8 +139,6 @@ frame_get_page (struct sup_page_table_entry *sup_page_table_entry)
   lock_acquire (&frame_table_lock);
   list_push_back (&frame_table_list, &frame_table_entry->elem);
   lock_release (&frame_table_lock);
-
-  // sup_page_table_entry->access_time = timer_ticks ();
 
   return frame_table_entry;
 }
