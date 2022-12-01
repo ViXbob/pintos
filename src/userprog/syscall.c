@@ -17,6 +17,7 @@
 #ifdef VM
 #include "vm/frame.h"
 #include "vm/page.h"
+#include "vm/swap.h"
 #endif
 
 /* Process identifier. */
@@ -437,13 +438,33 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
 
       if (sup_page_table_entry != NULL)
         {
+          sup_page_table_entry->dirty |= pagedir_is_dirty (t->pagedir, addr);
           /* If the page is dirty, we need write it back to file. */
-          if (pagedir_is_dirty (t->pagedir, addr))
+          if (sup_page_table_entry->dirty)
             {
               lock_acquire (&filesys_lock);
-              file_write_at (sup_page_table_entry->file, addr,
-                             sup_page_table_entry->read_bytes,
-                             sup_page_table_entry->offset);
+              if (sup_page_table_entry->swap_index == NOT_IN_SWAP)
+                {
+                  file_write_at (sup_page_table_entry->file, addr,
+                                 sup_page_table_entry->read_bytes,
+                                 sup_page_table_entry->offset);
+                }
+              else if (sup_page_table_entry->from_file == false)
+                {
+                  void *tmp_kpage = palloc_get_page (PAL_ZERO);
+                  // printf ("swap sector index = %d\n", sup_page_table_entry->swap_index);
+                  /* Loaded page either be in swap partion or frame table. */
+                  read_frame_from_block (sup_page_table_entry, tmp_kpage,
+                                         sup_page_table_entry->swap_index);
+                  file_write_at (sup_page_table_entry->file, tmp_kpage,
+                                 sup_page_table_entry->read_bytes,
+                                 sup_page_table_entry->offset);
+                }
+              else
+                {
+                  /* Mapped memory not be accessed actually. */
+                  ASSERT (sup_page_table_entry->from_file == true);
+                }
               lock_release (&filesys_lock);
             }
 
@@ -457,6 +478,10 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
 
           /* Delete it from supplementary page table. */
           hash_delete (&t->sup_page_table, &sup_page_table_entry->elem);
+        }
+      else
+        {
+          PANIC ("mapped memory must be in supplementary page table.");
         }
 
       addr += PGSIZE;
@@ -757,7 +782,7 @@ syscall_handler (struct intr_frame *f)
   uint32_t syscall_num = *((uint32_t *)f->esp);
   if (syscall_num >= SYSCALL_NUM || syscall_handlers[syscall_num] == NULL)
     exit (-1);
-    
+
   syscall_handlers[syscall_num](f);
   thread_current ()->syscall_esp = NULL;
   thread_current ()->during_syscall = false;
