@@ -544,7 +544,7 @@ munmap (mapid_t mapping)
 #endif
 
 static void
-syscall_halt (struct intr_frame *f)
+syscall_halt (struct intr_frame *f UNUSED)
 {
   halt ();
 }
