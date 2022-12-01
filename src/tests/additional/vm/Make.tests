@@ -1,0 +1,7 @@
+# -*- makefile -*-
+
+tests/additional/vm_TESTS = $(addprefix tests/additional/vm/,mmap-in-swap)
+tests/additional/vm_PROGS = $(tests/additional/vm_TESTS)
+tests/additional/vm/mmap-in-swap_SRC = tests/additional/vm/mmap-in-swap.c tests/lib.c tests/main.c
+tests/additional/vm/mmap-in-swap_PUTFILES = tests/additional/vm/words.txt
+tests/additional/vm/mmap-in-swap.output: TIMEOUT = 600
