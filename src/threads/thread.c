@@ -651,6 +651,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->exit_status = -1;
   t->code_file = NULL;
   t->pcb = NULL;
+  t->syscall_esp = NULL;
+  t->during_syscall = false;
 #endif
 
   t->magic = THREAD_MAGIC;

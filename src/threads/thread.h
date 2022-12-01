@@ -116,6 +116,8 @@ struct thread
   struct list file_list;          /* Files current thread opened. */
   struct file *code_file;         /* Code of this thread. */
   struct process_status *pcb;     /* PCB pointer of current thread. */
+  bool during_syscall;            /* Whether this thread is during syscall. */
+  void *syscall_esp;              /* User stack pointer during syscall. */
 #else
   /* Project 1 Thread */
   int64_t block_ticks;           /* Blocked ticks. */
@@ -130,7 +132,7 @@ struct thread
 
   /* For multilevel feedback queue scheduler. */
   fp recent_cpu; /* How much CPU time each process has received "recently". */
-  int nice; /* Nice value that determines how "nice" the thread should be. */
+  int nice;      /* Nice value that determines how "nice" the thread should be. */
 #endif
 
 #ifdef VM
