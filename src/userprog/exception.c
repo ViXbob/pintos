@@ -4,6 +4,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/gdt.h"
+#include "userprog/pagedir.h"
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -156,41 +157,37 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-#ifdef VM
   void *max_kernel_page = PHYS_BASE + init_ram_pages * PGSIZE;
-
+  // bool writable = pagedir_is_writable (thread_current ()->pagedir,
+  //                                      pg_round_down (fault_addr));
   /* Determine invalid. */
-  bool invalid = (fault_addr == NULL || (user && is_kernel_vaddr (fault_addr))
-                  || fault_addr < (void *)0x08048000 || !not_present
-                  || fault_addr >= max_kernel_page);
+  bool invalid
+      = (fault_addr == NULL || (user && is_kernel_vaddr (fault_addr))
+         || fault_addr < (void *)0x08048000 || !not_present
+         || fault_addr >= max_kernel_page);
+
+  // printf ("fault address is %p, stack pointer is %p\n", fault_addr, f->esp);
+  // printf ("not_present is %d\n", not_present);
+  // printf ("write is %d\n", write);
+  // printf ("user is %d\n", user);
+  // printf ("invalid is %d\n", invalid);
+  // printf ("writable is %d\n", writable);
+  // printf ("%p\n", pagedir_get_page (thread_current ()->pagedir,
+  //                                   pg_round_down (fault_addr)));
+
+  /* 1. Write on a un-writable page. Page fault. */ 
 
   if (!invalid)
     {
-      // printf ("fault address is %p, stack pointer is %p\n", fault_addr, f->esp);
+#ifdef VM
       if (!try_to_get_page (fault_addr, f->esp))
         {
           exit (-1);
         }
+#endif
     }
-  else 
+  else
     {
       exit (-1);
     }
-#else
-  if (!user)
-    {
-      typedef void (*__VOID_FUNCTION) (void);
-      f->eip = (__VOID_FUNCTION)f->eax;
-      f->eax = -1;
-      return;
-    }
-
-  /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. */
-  printf ("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
-          not_present ? "not present" : "rights violation",
-          write ? "writing" : "reading", user ? "user" : "kernel");
-  kill (f);
-#endif
 }
