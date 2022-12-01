@@ -158,29 +158,23 @@ page_fault (struct intr_frame *f)
   user = (f->error_code & PF_U) != 0;
 
   void *max_kernel_page = PHYS_BASE + init_ram_pages * PGSIZE;
-  // bool writable = pagedir_is_writable (thread_current ()->pagedir,
-  //                                      pg_round_down (fault_addr));
+
   /* Determine invalid. */
-  bool invalid
-      = (fault_addr == NULL || (user && is_kernel_vaddr (fault_addr))
-         || fault_addr < (void *)0x08048000 || !not_present
-         || fault_addr >= max_kernel_page);
+  bool invalid = (fault_addr == NULL || (user && is_kernel_vaddr (fault_addr))
+                  || fault_addr < (void *)0x08048000 || !not_present
+                  || fault_addr >= max_kernel_page);
 
-  // printf ("fault address is %p, stack pointer is %p\n", fault_addr, f->esp);
-  // printf ("not_present is %d\n", not_present);
-  // printf ("write is %d\n", write);
-  // printf ("user is %d\n", user);
-  // printf ("invalid is %d\n", invalid);
-  // printf ("writable is %d\n", writable);
-  // printf ("%p\n", pagedir_get_page (thread_current ()->pagedir,
-  //                                   pg_round_down (fault_addr)));
-
-  /* 1. Write on a un-writable page. Page fault. */ 
-
+  /* 1. Write on a un-writable page. Page fault. */
   if (!invalid)
     {
 #ifdef VM
-      if (!try_to_get_page (fault_addr, f->esp))
+      /* Check whether it is that kernel thread access user memory during
+       * syscall. */
+      void *esp = (user ? f->esp
+                        : (thread_current ()->during_syscall
+                               ? thread_current ()->syscall_esp
+                               : NULL));
+      if (!try_to_get_page (fault_addr, esp))
         {
           exit (-1);
         }
