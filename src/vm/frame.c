@@ -92,7 +92,11 @@ evict_one_frame (void)
   struct frame_table_entry *frame_table_entry
       = list_entry (min_elem, struct frame_table_entry, elem);
   lock_acquire (&frame_table_lock);
-  write_frame_to_block (frame_table_entry);
+  frame_table_entry->sup_page_table_entry->dirty
+      |= pagedir_is_dirty (frame_table_entry->owner->pagedir,
+                           frame_table_entry->sup_page_table_entry->addr);
+  write_frame_to_block (frame_table_entry->sup_page_table_entry,
+                        frame_table_entry->frame_addr);
   pagedir_clear_page (frame_table_entry->owner->pagedir,
                       frame_table_entry->sup_page_table_entry->addr);
   lock_release (&frame_table_lock);
