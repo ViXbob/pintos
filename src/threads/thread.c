@@ -13,10 +13,10 @@
 #include <string.h>
 
 #ifdef USERPROG
-#include "threads/malloc.h"
 #include "filesys/file.h"
-#include "userprog/syscall.h"
+#include "threads/malloc.h"
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -69,7 +69,12 @@ static unsigned thread_ticks; /* # of timer ticks since last yield. */
 /* Multilevel feedback queue scheduling. */
 static fp load_avg; /* # of average system load. */
 #else
-  extern struct lock filesys_lock;
+extern struct lock filesys_lock;
+extern void close (int fd);
+#endif
+
+#ifdef VM
+extern void munmap (mapid_t mapping);
 #endif
 
 /* If false (default), use round-robin scheduler.
@@ -320,25 +325,25 @@ thread_exit (void)
 
 #ifdef USERPROG
   struct thread *t = thread_current ();
-  ATOM 
-    {
-      
-      while (!list_empty (&t->child_process_list))
-        {
-          struct list_elem *e = list_begin(&t->child_process_list);
-          struct process_status *child_process
-              = list_entry (e, struct process_status, process_elem);
-          list_remove (e);
-          child_process->parent_thread = NULL;
-          bool died = lock_try_acquire (&child_process->lock_exit_status);
-          if (died)
-            {
-              lock_release (&child_process->lock_exit_status);
-              // palloc_free_page (child_process);
-              free (child_process);
-            }
-        }
-    }
+  ATOM
+  {
+
+    while (!list_empty (&t->child_process_list))
+      {
+        struct list_elem *e = list_begin (&t->child_process_list);
+        struct process_status *child_process
+            = list_entry (e, struct process_status, process_elem);
+        list_remove (e);
+        child_process->parent_thread = NULL;
+        bool died = lock_try_acquire (&child_process->lock_exit_status);
+        if (died)
+          {
+            lock_release (&child_process->lock_exit_status);
+            // palloc_free_page (child_process);
+            free (child_process);
+          }
+      }
+  }
 
   if (filesys_lock.holder == thread_current ())
     {
@@ -348,10 +353,20 @@ thread_exit (void)
   // close all file this process opened
   while (!list_empty (&t->file_list))
     {
-      struct file_descriptor *f
-          = list_entry (list_begin (&t->file_list), struct file_descriptor, file_elem);
+      struct file_descriptor *f = list_entry (
+          list_begin (&t->file_list), struct file_descriptor, file_elem);
       close (f->fd);
     }
+
+#ifdef VM
+  // close all mmap file this process have done
+  while (!list_empty (&t->mmap_list))
+    {
+      struct mmap_entry *mmap_entry
+          = list_entry (list_begin (&t->mmap_list), struct mmap_entry, elem);
+      munmap (mmap_entry->mmap_id);
+    }
+#endif
 
   // Print exit status.
   printf ("%s: exit(%d)\n", t->name, t->exit_status);
@@ -478,7 +493,7 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice
 #ifdef USERPROG
-UNUSED
+                     UNUSED
 #endif
 )
 {
@@ -527,9 +542,9 @@ thread_get_recent_cpu (void)
   ASSERT (thread_mlfqs);
   return FP_ROUND_TO_NEAREASET (
       FP_MUL_MIXED (thread_current ()->recent_cpu, 100));
-#else 
+#else
   return 0;
-#endif  
+#endif
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -623,7 +638,7 @@ init_thread (struct thread *t, const char *name, int priority)
   else
     t->priority = priority;
   t->origin_priority = priority;
-  
+
   list_init (&t->donate_list);
   t->holder = NULL;
   t->recent_cpu = 0;

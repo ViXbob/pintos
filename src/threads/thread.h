@@ -135,6 +135,7 @@ struct thread
 
 #ifdef VM
   sup_page_table sup_page_table;
+  struct list mmap_list;
 #endif
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
