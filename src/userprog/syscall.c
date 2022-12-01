@@ -44,8 +44,6 @@ static syscall_handler_func syscall_handler;
 static syscall_handler_func
     *syscall_handlers[SYSCALL_NUM]; // array of all system calls
 
-static void *now_esp;
-
 struct lock filesys_lock;
 
 /* Projects 2 and later. */
@@ -548,15 +546,13 @@ munmap (mapid_t mapping)
 static void
 syscall_halt (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 0))
-    exit (-1);
   halt ();
 }
 
 static void
 syscall_exit (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
   int status = *((int *)(f->esp + 4));
   exit (status);
@@ -566,7 +562,7 @@ static void
 syscall_exec (struct intr_frame *f)
 {
   // check normal memory
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
 
   // check string memory
@@ -580,19 +576,16 @@ syscall_exec (struct intr_frame *f)
 static void
 syscall_wait (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
   tid_t process = *((tid_t *)(f->esp + 4));
   f->eax = wait (process);
-  // printf("syscall_wait result is %d\n", f->eax);
-  // printf("next line to run %p.\n", f->eip);
-  // printf("next line to 0x%08x\n", *(uint32_t *)(f->eip));
 }
 
 static void
 syscall_create (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 3))
+  if (!user_memory_check (f->esp + 4, 4 * 2))
     exit (-1);
   char *file = *((char **)(f->esp + 4));
   if (!user_string_memory_check (file))
@@ -604,7 +597,7 @@ syscall_create (struct intr_frame *f)
 static void
 syscall_remove (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
   char *file = *((char **)(f->esp + 4));
   if (!user_string_memory_check (file))
@@ -615,7 +608,7 @@ syscall_remove (struct intr_frame *f)
 static void
 syscall_open (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
   char *file = *((char **)(f->esp + 4));
   if (!user_string_memory_check (file))
@@ -626,7 +619,7 @@ syscall_open (struct intr_frame *f)
 static void
 syscall_filesize (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
   int fd = *((int *)(f->esp + 4));
   f->eax = filesize (fd);
@@ -635,7 +628,7 @@ syscall_filesize (struct intr_frame *f)
 static void
 syscall_read (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 4))
+  if (!user_memory_check (f->esp + 4, 4 * 3))
     exit (-1);
 
   int fd = *((int *)(f->esp + 4));
@@ -652,7 +645,7 @@ static void
 syscall_write (struct intr_frame *f)
 {
   // memory check
-  if (!user_memory_check (f->esp, 4 * 4))
+  if (!user_memory_check (f->esp + 4, 4 * 3))
     exit (-1);
 
   int fd = *((int *)(f->esp + 4));
@@ -668,7 +661,7 @@ syscall_write (struct intr_frame *f)
 static void
 syscall_seek (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 3))
+  if (!user_memory_check (f->esp + 4, 4 * 2))
     exit (-1);
 
   int fd = *((int *)(f->esp + 4));
@@ -680,7 +673,7 @@ syscall_seek (struct intr_frame *f)
 static void
 syscall_tell (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
 
   int fd = *((int *)(f->esp + 4));
@@ -691,7 +684,7 @@ syscall_tell (struct intr_frame *f)
 static void
 syscall_close (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
 
   int fd = *((int *)(f->esp + 4));
@@ -703,7 +696,7 @@ syscall_close (struct intr_frame *f)
 static void
 syscall_mmap (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 3))
+  if (!user_memory_check (f->esp + 4, 4 * 2))
     exit (-1);
 
   int fd = *((int *)(f->esp + 4));
@@ -715,7 +708,7 @@ syscall_mmap (struct intr_frame *f)
 static void
 syscall_munmap (struct intr_frame *f)
 {
-  if (!user_memory_check (f->esp, 4 * 2))
+  if (!user_memory_check (f->esp + 4, 4))
     exit (-1);
 
   mapid_t mapping = *((mapid_t *)(f->esp + 4));
@@ -750,24 +743,24 @@ syscall_init (void)
 #endif
   // init filesys_lock
   lock_init (&filesys_lock);
-  // init file_list
-  // list_init (&thread_current ()->file_list);
-  // exclude STDIN / STDOUT
   init_fd_pool ();
 }
 
 static void
 syscall_handler (struct intr_frame *f)
 {
+  thread_current ()->during_syscall = true;
+  thread_current ()->syscall_esp = NULL;
   if (!user_memory_check (f->esp, 4))
     exit (-1);
-  now_esp = f->esp;
+  thread_current ()->syscall_esp = f->esp;
   uint32_t syscall_num = *((uint32_t *)f->esp);
-  if (syscall_num >= SYSCALL_NUM)
+  if (syscall_num >= SYSCALL_NUM || syscall_handlers[syscall_num] == NULL)
     exit (-1);
-  if (syscall_handlers[syscall_num] == NULL)
-    exit (-1);
+    
   syscall_handlers[syscall_num](f);
+  thread_current ()->syscall_esp = NULL;
+  thread_current ()->during_syscall = false;
 }
 
 /* Reads a byte at user virtual address UADDR.
@@ -777,14 +770,12 @@ syscall_handler (struct intr_frame *f)
 static int
 get_user_byte (const uint8_t *uaddr)
 {
-  // int result;
-  // asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
-  // return result;
-
   if (uaddr == NULL || !is_user_vaddr (uaddr) || uaddr < (uint8_t *)0x08048000)
     return -1;
 
-  return *uaddr;
+  int result;
+  asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
+  return result;
 }
 
 /* Writes BYTE to user address UDST.
@@ -803,70 +794,32 @@ get_user_byte (const uint8_t *uaddr)
 static bool
 user_memory_check (void *uaddr, int bytes)
 {
-  enum intr_level old_level;
-  old_level = intr_disable ();
-  if (uaddr + bytes > PHYS_BASE)
-    {
-      intr_set_level (old_level);
-      return false;
-    }
-
   for (int i = 0; i < bytes; i++)
     {
-      if (!is_user_vaddr (uaddr + i))
-        return false;
-
-      /* Page is not present. */
-      if (pagedir_get_page (thread_current ()->pagedir, uaddr + i) == NULL)
-        {
-#ifdef VM
-          if (!try_to_get_page (uaddr + i, now_esp))
-            return false;
-#else
-          return false;
-#endif
-        }
-
       if (get_user_byte ((uint8_t *)(uaddr + i)) == -1)
         {
-          intr_set_level (old_level);
           return false;
         }
     }
-  intr_set_level (old_level);
   return true;
 }
 
 static bool
 user_string_memory_check (char *uaddr)
 {
-  enum intr_level old_level;
-  old_level = intr_disable ();
   for (int i = 0;; i++)
     {
-      if (!is_user_vaddr (uaddr + i))
-        return false;
-
-      /* Page is not present. */
-      if (pagedir_get_page (thread_current ()->pagedir, uaddr + i) == NULL)
-        {
-#ifdef VM
-          if (!try_to_get_page (uaddr + i, now_esp))
-            return false;
-#else
-          return false;
-#endif
-        }
-
       int value = get_user_byte ((uint8_t *)(uaddr + i));
+
       if (value == 0 || value == -1)
         {
           // value is equal to zero, string terminator
           // value is equal to minus one, memory error
-          intr_set_level (old_level);
+          // intr_set_level (old_level);
           return value != -1;
         }
     }
+  return true;
 }
 
 static struct file_descriptor *
