@@ -184,6 +184,11 @@ page_fault (struct intr_frame *f)
         {
           exit (-1);
         }
+#else
+      if (not_present)
+        {
+          exit (-1);
+        }
 #endif
     }
   else
