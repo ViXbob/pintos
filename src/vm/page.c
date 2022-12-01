@@ -293,6 +293,7 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
     }
 
   sup_page_table_entry->access_time = timer_ticks ();
+  sup_page_table_entry->ref_bit = 1;
 
   read_frame_from_block (sup_page_table_entry, frame_table_entry->frame_addr,
                          sup_page_table_entry->swap_index);

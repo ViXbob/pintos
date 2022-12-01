@@ -452,7 +452,6 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
               else if (sup_page_table_entry->from_file == false)
                 {
                   void *tmp_kpage = palloc_get_page (PAL_ZERO);
-                  // printf ("swap sector index = %d\n", sup_page_table_entry->swap_index);
                   /* Loaded page either be in swap partion or frame table. */
                   read_frame_from_block (sup_page_table_entry, tmp_kpage,
                                          sup_page_table_entry->swap_index);

@@ -9,6 +9,7 @@
 #include "userprog/pagedir.h"
 #include <list.h>
 #include <stdio.h>
+#include <hash.h>
 
 /* Frame table lock, you should lock when using frame list. */
 struct lock frame_table_lock;
@@ -37,6 +38,18 @@ bool free_frame_table_entry (struct frame_table_entry *entry,
 bool frame_access_time_less (const struct list_elem *a,
                              const struct list_elem *b, void *aux UNUSED);
 
+enum
+{
+  LRU,
+  CLOCK
+};
+
+#define EVICT_METHOD CLOCK
+
+static struct list_elem *clock_hand;
+
+struct frame_table_entry *find_one_to_evict (void);
+
 struct frame_table_entry *evict_one_frame (void);
 
 void
@@ -44,6 +57,7 @@ frame_table_init (void)
 {
   list_init (&frame_table_list);
   lock_init (&frame_table_lock);
+  clock_hand = list_head (&frame_table_list);
 }
 
 struct frame_table_entry *
@@ -84,13 +98,55 @@ frame_access_time_less (const struct list_elem *a, const struct list_elem *b,
 }
 
 struct frame_table_entry *
+find_one_to_evict (void)
+{
+  switch (EVICT_METHOD)
+    {
+    case LRU:
+      {
+        struct list_elem *min_elem
+            = list_min (&frame_table_list, frame_access_time_less, NULL);
+        struct frame_table_entry *frame_table_entry
+            = list_entry (min_elem, struct frame_table_entry, elem);
+        return frame_table_entry;
+      }
+    case CLOCK:
+      {
+        if (list_empty (&frame_table_list))
+          return NULL;
+        struct frame_table_entry *frame_table_entry = NULL;
+        while (frame_table_entry == NULL)
+          {
+            clock_hand = (clock_hand == list_rbegin (&frame_table_list)
+                              ? list_begin (&frame_table_list)
+                              : list_next (clock_hand));
+            frame_table_entry
+                = list_entry (clock_hand, struct frame_table_entry, elem);
+            if (frame_table_entry->sup_page_table_entry->ref_bit)
+              {
+                frame_table_entry->sup_page_table_entry->ref_bit = 0;
+                frame_table_entry = NULL;
+              }
+            else if (clock_hand == list_begin (&frame_table_list))
+              {
+                frame_table_entry = NULL;
+              }
+          }
+        // printf ("writable is %d\n", frame_table_entry->sup_page_table_entry->writable);
+        return frame_table_entry;
+      }
+    default:
+      {
+        PANIC ("EVICT METHOD SHOULD EITHER BE LRU OR CLOCK.");
+      }
+    }
+}
+
+struct frame_table_entry *
 evict_one_frame (void)
 {
   // printf ("start evict.\n");
-  struct list_elem *min_elem
-      = list_min (&frame_table_list, frame_access_time_less, NULL);
-  struct frame_table_entry *frame_table_entry
-      = list_entry (min_elem, struct frame_table_entry, elem);
+  struct frame_table_entry *frame_table_entry = find_one_to_evict ();
   lock_acquire (&frame_table_lock);
   frame_table_entry->sup_page_table_entry->dirty
       |= pagedir_is_dirty (frame_table_entry->owner->pagedir,
