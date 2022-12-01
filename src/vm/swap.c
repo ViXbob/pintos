@@ -16,6 +16,12 @@ static struct block *global_swap_block;
 
 #define SECTOR_PER_PAGE (PGSIZE / BLOCK_SECTOR_SIZE)
 
+/* Release corresponding slot (one page) in swap by given sector index. */
+void swap_release_slot (int sector_index);
+
+/* Get a new swap slot. */
+int get_new_swap_slot (void);
+
 void
 swap_init (void)
 {
@@ -50,18 +56,21 @@ swap_release_slot (int sector_index)
 }
 
 void
-read_frame_from_block (struct frame_table_entry *frame_table_entry, int sector_index)
+read_frame_from_block (struct sup_page_table_entry *sup_page_table_entry,
+                       void *addr, int sector_index)
 {
-  ASSERT (frame_table_entry != NULL);
+  ASSERT (sup_page_table_entry != NULL);
 
   for (int i = 0; i < SECTOR_PER_PAGE; i++)
     {
       block_read (global_swap_block, sector_index + i,
-                  frame_table_entry->frame_addr + i * BLOCK_SECTOR_SIZE);
+                  addr + i * BLOCK_SECTOR_SIZE);
     }
 
   /* Release those slots. */
   swap_release_slot (sector_index);
+
+  sup_page_table_entry->swap_index = NOT_IN_SWAP;
 }
 
 int
@@ -81,15 +90,16 @@ get_new_swap_slot (void)
 }
 
 void
-write_frame_to_block (struct frame_table_entry *frame_table_entry)
+write_frame_to_block (struct sup_page_table_entry *sup_page_table_entry,
+                      void *addr)
 {
   int sector_index = get_new_swap_slot ();
 
-  frame_table_entry->sup_page_table_entry->swap_index = sector_index;
+  sup_page_table_entry->swap_index = sector_index;
 
   for (int i = 0; i < SECTOR_PER_PAGE; i++)
     {
       block_write (global_swap_block, sector_index + i,
-                   frame_table_entry->frame_addr + i * BLOCK_SECTOR_SIZE);
+                   addr + i * BLOCK_SECTOR_SIZE);
     }
 }

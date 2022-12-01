@@ -93,13 +93,15 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
   /* Virtual address must be page-aligned. */
   entry->addr = pg_round_down (addr);
   entry->access_time = access_time;
+  entry->writable = false;
+  entry->dirty = false;
+  entry->ref_bit = 1;
   entry->swap_index = NOT_IN_SWAP;
   entry->from_file = false;
   entry->file = NULL;
   entry->offset = 0;
   entry->read_bytes = 0;
   entry->zero_bytes = 0;
-  entry->writable = false;
   entry->is_mmap = false;
   lock_init (&entry->lock);
   // printf ("address of sup_page_table_entry_lock is %p.\n", &entry->lock);
@@ -257,6 +259,9 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
       return false;
     }
 
+  /* One page must be lazily loaded from file once. */
+  sup_page_table_entry->from_file = false;
+
   lock_release (&sup_page_table_entry->lock);
   return true;
 }
@@ -286,10 +291,11 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
       lock_release (&sup_page_table_entry->lock);
       return false;
     }
-  
+
   sup_page_table_entry->access_time = timer_ticks ();
 
-  read_frame_from_block (frame_table_entry, sup_page_table_entry->swap_index);
+  read_frame_from_block (sup_page_table_entry, frame_table_entry->frame_addr,
+                         sup_page_table_entry->swap_index);
   sup_page_table_entry->swap_index = NOT_IN_SWAP;
 
   lock_release (&sup_page_table_entry->lock);

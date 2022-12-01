@@ -15,6 +15,8 @@ struct sup_page_table_entry
   uint64_t access_time;  /* Lastest time the page is accessed. Used for LRU. */
   struct hash_elem elem; /* Hash table element. */
   bool writable;         /* Whether this page can be written. */
+  bool dirty;            /* Whether this page is dirty. */
+  int ref_bit;           /* Clock reference bit. */
   /* Used for swap. */
   int swap_index; /* Index of the beginning sector in swap file. */
   /* Used for file load. */
@@ -37,7 +39,7 @@ void sup_page_table_free (sup_page_table *sup_page_table);
 
 /* Find entry with specific virtual address. */
 struct sup_page_table_entry *sup_page_table_find_entry (sup_page_table *table,
-                                         void *target_addr);
+                                                        void *target_addr);
 
 /* Try to get a page at fault address. From file or swap or for growing stack.
  */
