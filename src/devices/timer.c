@@ -96,9 +96,15 @@ timer_sleep (int64_t ticks)
 
   int64_t start = timer_ticks ();
 
+#ifndef USERPROG
   enum intr_level old_level = intr_disable ();
   thread_block_with_ticks (ticks + start);
   intr_set_level (old_level);
+#else
+  ASSERT (intr_get_level () == INTR_ON);
+  while (timer_elapsed (start) < ticks) 
+    thread_yield ();
+#endif
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -176,6 +182,7 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+#ifndef USERPROG
   enum intr_level old_level = intr_disable ();
   thread_unblock_check (ticks);
 
@@ -194,6 +201,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
         }
     }
   intr_set_level (old_level);
+#endif
   thread_tick ();
 }
 

@@ -5,15 +5,15 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
-#include "threads/palloc.h"
 #include "threads/malloc.h"
+#include "threads/palloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
-#include "userprog/tss.h"
 #include "userprog/syscall.h"
+#include "userprog/tss.h"
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -21,9 +21,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef VM
+#include "vm/page.h"
+#endif
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static void parse_parameter (char *str, int *argc, char **argv);
+
+extern struct lock filesys_lock;
 
 #define MAX_PARAMETER 128
 #define WORD_BYTE 4
@@ -66,17 +72,22 @@ process_execute (const char *file_name)
   struct semaphore sema_fn_copy;
   struct semaphore sema_pcb;
 
-  /* Palloc memory for variable. */ 
-  child_process = palloc_get_page(PAL_ZERO);
+  /* Palloc memory for variable. */
+  // child_process = palloc_get_page(PAL_ZERO);
+  child_process = malloc (sizeof (struct process_status));
   if (child_process == NULL)
     goto palloc_failed;
+
+  size_t file_name_length = strlen (file_name) + 15;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (PAL_ZERO);
+  // fn_copy = palloc_get_page (PAL_ZERO);
+  fn_copy = malloc (file_name_length);
   if (fn_copy == NULL)
     goto palloc_failed;
 
-  process_name = palloc_get_page (PAL_ZERO);
+  // process_name = palloc_get_page (PAL_ZERO);
+  process_name = malloc (file_name_length);
   if (process_name == NULL)
     goto palloc_failed;
 
@@ -89,9 +100,9 @@ process_execute (const char *file_name)
   para_passing.fn_copy = fn_copy;
   child_process->parent_thread = thread_current ();
 
-  /* Copy file name. */ 
-  strlcpy (para_passing.fn_copy, file_name, PGSIZE);
-  strlcpy (process_name, file_name, PGSIZE);
+  /* Copy file name. */
+  strlcpy (para_passing.fn_copy, file_name, file_name_length - 10);
+  strlcpy (process_name, file_name, file_name_length - 10);
 
   /* Get process name. */
   process_name = strtok_r (process_name, " ", &save_ptr);
@@ -107,26 +118,32 @@ process_execute (const char *file_name)
   sema_down (para_passing.sema_pcb);
   /* child_process->pid = tid; */
   if (child_process->pid >= 0)
-    list_push_back (&thread_current ()->child_process_list, &child_process->process_elem);
-  else 
+    list_push_back (&thread_current ()->child_process_list,
+                    &child_process->process_elem);
+  else
     goto palloc_failed;
 
   sema_down (para_passing.sema_fn_copy);
   // printf ("free fn_copy & process_name.\n");
   // free two temporary string
-  palloc_free_page (fn_copy);
-  palloc_free_page (process_name);
+  // palloc_free_page (fn_copy);
+  free (fn_copy);
+  // palloc_free_page (process_name);
+  free (process_name);
 
   return tid;
 
 palloc_failed:
   // printf ("If palloc error, free all of them.\n");
-  if (fn_copy != NULL) 
-    palloc_free_page (fn_copy);
+  if (fn_copy != NULL)
+    // palloc_free_page (fn_copy);
+    free (fn_copy);
   if (process_name != NULL)
-    palloc_free_page (process_name);
+    // palloc_free_page (process_name);
+    free (process_name);
   if (child_process != NULL)
-    palloc_free_page (child_process);
+    // palloc_free_page (child_process);
+    free (child_process);
   return TID_ERROR;
 }
 
@@ -144,6 +161,12 @@ start_process (void *para_passing_)
   para_passing->pcb->t = thread_current ();
   thread_current ()->pcb = para_passing->pcb;
 
+#ifdef VM
+  /* Initialize supplementary page table. */
+  sup_page_table_init (&thread_current ()->sup_page_table);
+  list_init (&thread_current ()->mmap_list);
+#endif
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -151,7 +174,8 @@ start_process (void *para_passing_)
   if_.eflags = FLAG_IF | FLAG_MBS;
 
   int argc = 0;
-  char **argv = (char**) palloc_get_page(PAL_ZERO);
+  // char **argv = (char**) palloc_get_page(PAL_ZERO);
+  char **argv = (char **)malloc (MAX_PARAMETER * sizeof (char *));
 
   if (argv == NULL)
     {
@@ -162,6 +186,7 @@ start_process (void *para_passing_)
   parse_parameter (para_passing->fn_copy, &argc, (char **)argv);
 
   ASSERT (argc > 0);
+  ASSERT (argc <= MAX_PARAMETER);
 
   success = load (argv[0], &if_.eip, &if_.esp);
 
@@ -192,7 +217,9 @@ start_process (void *para_passing_)
 
   // push argument pointers into stack
   ASSERT (sizeof (char *) == WORD_BYTE);
-  for (int index = argc; index >= 0; index--)
+  if_.esp -= sizeof (char *);
+  *((char **)if_.esp) = NULL;
+  for (int index = argc - 1; index >= 0; index--)
     {
       if_.esp -= sizeof (char *);
       *((char **)if_.esp) = argv[index];
@@ -217,10 +244,10 @@ start_process (void *para_passing_)
   if_.esp -= sizeof (func_ptr_type);
   *(func_ptr_type *)if_.esp = NULL;
 
-
 memory_error:
   if (argv != NULL)
-    palloc_free_page (argv);
+    // palloc_free_page (argv);
+    free (argv);
 
   para_passing->pcb->pid = thread_current ()->tid;
 
@@ -228,11 +255,11 @@ memory_error:
   sema_up (para_passing->sema_pcb);
 
   /* If load failed, quit. */
-  if (!success) {
-    thread_current ()->exit_status = -1;
-    thread_exit ();
-  }
-    
+  if (!success)
+    {
+      thread_current ()->exit_status = -1;
+      thread_exit ();
+    }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -262,21 +289,26 @@ process_wait (tid_t child_tid)
   find_process.pcb = NULL;
 
   ATOM
-    {
-      child_process_foreach (thread_current (), &find_process_with_pid, (void *)&find_process);
-    }
+  {
+    child_process_foreach (thread_current (), &find_process_with_pid,
+                           (void *)&find_process);
+  }
 
-  // printf("%s in wait: %d\n", thread_name(), list_size (&thread_current ()->child_process_list));
+  // printf("%s in wait: %d\n", thread_name(), list_size (&thread_current
+  // ()->child_process_list));
   if (find_process.pcb == NULL)
     return -1;
-  // printf("child process is %s, parent process is %s\n", find_thread.t->name, find_thread.t->parent_thread->name);
+  // printf("child process is %s, parent process is %s\n", find_thread.t->name,
+  // find_thread.t->parent_thread->name);
   lock_acquire (&find_process.pcb->lock_exit_status);
   process_status = find_process.pcb->exit_status;
   lock_release (&find_process.pcb->lock_exit_status);
   // Free child process's pcb & IMPORTANT !!!
   list_remove (&find_process.pcb->process_elem);
-  palloc_free_page (find_process.pcb);
-  // printf("%s out wait: %d, child process status is %d\n", thread_name(), list_size (&thread_current ()->child_process_list), process_status);
+  // palloc_free_page (find_process.pcb);
+  free (find_process.pcb);
+  // printf("%s out wait: %d, child process status is %d\n", thread_name(),
+  // list_size (&thread_current ()->child_process_list), process_status);
   return process_status;
 }
 
@@ -286,6 +318,11 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+#ifdef VM
+  /* Free supplementary page table. */
+  sup_page_table_free (&cur->sup_page_table);
+#endif
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -418,10 +455,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: open failed\n", file_name);
       goto done;
     }
-  
+
   t->code_file = file;
   file_deny_write (file);
-  
+
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2
@@ -508,7 +545,7 @@ done:
 
 /* load() helpers. */
 
-static bool install_page (void *upage, void *kpage, bool writable);
+bool install_page (void *upage, void *kpage, bool writable);
 
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
@@ -576,7 +613,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
-
+#ifndef VM
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0)
     {
@@ -612,6 +649,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       upage += PGSIZE;
     }
   return true;
+#else
+  file_seek (file, ofs);
+  return lazy_load_segment (file, ofs, upage, read_bytes, zero_bytes, writable,
+                            false);
+#endif
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
@@ -619,9 +661,13 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp)
 {
-  uint8_t *kpage;
   bool success = false;
-
+#ifdef VM
+  success = grow_stack (PHYS_BASE - PGSIZE);
+  if (success)
+    *esp = PHYS_BASE;
+#else
+  uint8_t *kpage;
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL)
     {
@@ -631,6 +677,7 @@ setup_stack (void **esp)
       else
         palloc_free_page (kpage);
     }
+#endif
   return success;
 }
 
@@ -643,7 +690,7 @@ setup_stack (void **esp)
    with palloc_get_page().
    Returns true on success, false if UPAGE is already mapped or
    if memory allocation fails. */
-static bool
+bool
 install_page (void *upage, void *kpage, bool writable)
 {
   struct thread *t = thread_current ();

@@ -1,5 +1,4 @@
 #include "userprog/syscall.h"
-#include "userprog/pagedir.h"
 #include "devices/input.h"
 #include "devices/shutdown.h"
 #include "filesys/file.h"
@@ -10,17 +9,19 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include <stdio.h>
 #include <syscall-nr.h>
 
+#ifdef VM
+#include "vm/frame.h"
+#include "vm/page.h"
+#endif
+
 /* Process identifier. */
 typedef int pid_t;
 #define PID_ERROR ((pid_t)-1)
-
-/* Map region identifier. */
-typedef int mapid_t;
-#define MAP_FAILED ((mapid_t)-1)
 
 /* Maximum characters in a filename written by readdir(). */
 #define READDIR_MAX_LEN 14
@@ -43,6 +44,10 @@ static syscall_handler_func syscall_handler;
 static syscall_handler_func
     *syscall_handlers[SYSCALL_NUM]; // array of all system calls
 
+static void *now_esp;
+
+struct lock filesys_lock;
+
 /* Projects 2 and later. */
 void halt (void) NO_RETURN;
 void exit (int status) NO_RETURN;
@@ -56,17 +61,22 @@ int read (int fd, void *buffer, unsigned length);
 int write (int fd, const void *buffer, unsigned length);
 void seek (int fd, unsigned position);
 unsigned tell (int fd);
+void close (int fd);
 
+#ifdef VM
 /* Project 3 and optionally project 4. */
 mapid_t mmap (int fd, void *addr);
-void munmap (mapid_t);
+void munmap (mapid_t mapping);
+#endif
 
+#ifdef FILESYS
 /* Project 4 only. */
 bool chdir (const char *dir);
 bool mkdir (const char *dir);
 bool readdir (int fd, char name[READDIR_MAX_LEN + 1]);
 bool isdir (int fd);
 int inumber (int fd);
+#endif
 
 static syscall_handler_func syscall_halt;
 static syscall_handler_func syscall_exit;
@@ -81,6 +91,11 @@ static syscall_handler_func syscall_write;
 static syscall_handler_func syscall_seek;
 static syscall_handler_func syscall_tell;
 static syscall_handler_func syscall_close;
+
+#ifdef VM
+static syscall_handler_func syscall_mmap;
+static syscall_handler_func syscall_munmap;
+#endif
 
 static int get_user_byte (const uint8_t *uaddr);
 // static bool put_user_byte (uint8_t *udst, uint8_t byte);
@@ -121,9 +136,9 @@ static void
 recycle_fd (int old_fd)
 {
   ASSERT (old_fd < MAX_FILE + 2);
-  ASSERT (fd_pool_top < MAX_FILE);
-  fd_pool[fd_pool_top] = old_fd;
+  ASSERT (fd_pool_top + 1 < MAX_FILE);
   fd_pool_top++;
+  fd_pool[fd_pool_top] = old_fd;
 }
 
 void
@@ -132,7 +147,7 @@ halt (void)
   shutdown_power_off ();
 }
 
-int 
+int
 valid_fd_num (void)
 {
   return fd_pool_top;
@@ -182,7 +197,8 @@ open (const char *file_name)
 {
   struct file *file = NULL;
   struct file_descriptor *file_opened;
-  file_opened = palloc_get_page (0);
+  // file_opened = palloc_get_page (0);
+  file_opened = malloc (sizeof (struct file_descriptor));
   if (file_opened == NULL)
     return -1;
   lock_acquire (&filesys_lock);
@@ -239,7 +255,7 @@ read (int fd, void *buffer, unsigned length)
       int result = -1;
       lock_acquire (&filesys_lock);
       f = find_file_with_fd (&thread_current ()->file_list, fd);
-      
+
       if (f == NULL)
         {
           lock_release (&filesys_lock);
@@ -267,7 +283,7 @@ write (int fd, const void *buffer, unsigned length)
       int result = -1;
       lock_acquire (&filesys_lock);
       f = find_file_with_fd (&thread_current ()->file_list, fd);
-      
+
       if (f == NULL)
         {
           lock_release (&filesys_lock);
@@ -331,10 +347,203 @@ close (int fd)
       recycle_fd (old_fd);
       list_remove (&f->file_elem);
       file_close (f->file);
-      palloc_free_page (f);
+      // palloc_free_page (f);
+      free (f);
       lock_release (&filesys_lock);
     }
 }
+
+#ifdef VM
+static void init_mmapid_pool (void);
+static int get_mmapid (void);
+static void recycle_mmapid (int old_mmapid);
+
+#define MAX_MMAPID 128
+static int mmapid_pool[MAX_MMAPID];
+static int mmapid_pool_top;
+
+static void
+init_mmapid_pool (void)
+{
+  mmapid_pool_top = MAX_MMAPID - 1;
+  for (int i = 0; i < MAX_MMAPID; i++)
+    mmapid_pool[MAX_MMAPID - i - 1] = i;
+}
+
+static int
+get_mmapid (void)
+{
+  int result = -1;
+  if (mmapid_pool_top >= 0)
+    {
+      result = mmapid_pool[mmapid_pool_top];
+      mmapid_pool_top--;
+    }
+  return result;
+}
+
+static void
+recycle_mmapid (int old_mmapid)
+{
+  ASSERT (old_mmapid < MAX_MMAPID);
+  ASSERT (mmapid_pool_top + 1 < MAX_MMAPID);
+  mmapid_pool_top++;
+  mmapid_pool[mmapid_pool_top] = old_mmapid;
+}
+
+static bool is_mmap_overlap (void *addr, off_t file_size);
+static struct mmap_entry *new_mmap_entry (void *addr, struct file *f,
+                                          int page_count);
+static void free_mmap_entry (struct mmap_entry *mmap_entry);
+
+static bool
+is_mmap_overlap (void *addr, off_t file_size)
+{
+  struct thread *t = thread_current ();
+
+  for (; file_size >= 0; file_size -= PGSIZE)
+    {
+      if (sup_page_table_find_entry (&t->sup_page_table, addr) != NULL)
+        return true;
+      addr += PGSIZE;
+    }
+
+  return false;
+}
+
+static struct mmap_entry *
+new_mmap_entry (void *addr, struct file *f, int page_count)
+{
+  struct mmap_entry *mmap_entry
+      = (struct mmap_entry *)malloc (sizeof (struct mmap_entry));
+  if (mmap_entry == NULL)
+    return NULL;
+  mmap_entry->addr = addr;
+  mmap_entry->f = f;
+  mmap_entry->page_count = page_count;
+  mmap_entry->mmap_id = get_mmapid ();
+
+  return mmap_entry;
+}
+
+static void
+free_mmap_entry (struct mmap_entry *mmap_entry)
+{
+  struct thread *t = thread_current ();
+  void *addr = mmap_entry->addr;
+  int page_count = mmap_entry->page_count;
+  for (int now_page = 0; now_page < page_count; now_page++)
+    {
+      struct sup_page_table_entry *sup_page_table_entry
+          = sup_page_table_find_entry (&t->sup_page_table, addr);
+
+      if (sup_page_table_entry != NULL)
+        {
+          /* If the page is dirty, we need write it back to file. */
+          if (pagedir_is_dirty (t->pagedir, addr))
+            {
+              lock_acquire (&filesys_lock);
+              file_write_at (sup_page_table_entry->file, addr,
+                             sup_page_table_entry->read_bytes,
+                             sup_page_table_entry->offset);
+              lock_release (&filesys_lock);
+            }
+
+          /* If this page is present, we should delete it. */
+          void *kpage = pagedir_get_page (t->pagedir, addr);
+          if (kpage != NULL)
+            {
+              frame_free_page (kpage);
+              pagedir_clear_page (t->pagedir, addr);
+            }
+
+          /* Delete it from supplementary page table. */
+          hash_delete (&t->sup_page_table, &sup_page_table_entry->elem);
+        }
+
+      addr += PGSIZE;
+    }
+
+  lock_acquire (&filesys_lock);
+  file_close (mmap_entry->f);
+  lock_release (&filesys_lock);
+
+  recycle_mmapid (mmap_entry->mmap_id);
+
+  free (mmap_entry);
+}
+
+mapid_t
+mmap (int fd, void *addr)
+{
+  /* 1. fd is STDIN or STDOUT.
+     2. addr is not page aligned.
+     3. addr is zero.
+  */
+  if (fd < 2 || (uint32_t)addr % PGSIZE != 0 || addr == NULL)
+    return MAP_FAILED;
+
+  struct file_descriptor *f
+      = find_file_with_fd (&thread_current ()->file_list, fd);
+
+  off_t file_size = 0;
+
+  /* File size must greater than zero. */
+  if (f == NULL || (file_size = file_length (f->file)) <= 0)
+    return MAP_FAILED;
+
+  lock_acquire (&filesys_lock);
+  struct file *reopened_file = file_reopen (f->file);
+  lock_release (&filesys_lock);
+
+  ASSERT (file_size == file_length (reopened_file));
+
+  if (reopened_file == NULL)
+    return MAP_FAILED;
+
+  /* Check whether the mmap is overlapping with other mapped memory. */
+  if (is_mmap_overlap (addr, file_size))
+    return MAP_FAILED;
+
+  uint32_t read_bytes = file_size;
+  uint32_t zero_bytes = (PGSIZE - file_size % PGSIZE) % PGSIZE;
+  int page_count = (read_bytes + zero_bytes) / PGSIZE;
+
+  struct mmap_entry *mmap_entry
+      = new_mmap_entry (addr, reopened_file, page_count);
+
+  if (mmap_entry == NULL)
+    return MAP_FAILED;
+
+  if (!lazy_load_segment (reopened_file, 0, addr, read_bytes, zero_bytes, true,
+                          true))
+    {
+      free (mmap_entry);
+      return MAP_FAILED;
+    }
+
+  list_push_back (&thread_current ()->mmap_list, &mmap_entry->elem);
+  return mmap_entry->mmap_id;
+}
+
+void
+munmap (mapid_t mapping)
+{
+  struct thread *t = thread_current ();
+  /* Iterate over the mmap list and unmap all corresponding entry */
+  for (struct list_elem *e = list_begin (&t->mmap_list);
+       e != list_end (&t->mmap_list); e = list_next (e))
+    {
+      struct mmap_entry *entry = list_entry (e, struct mmap_entry, elem);
+      if (entry->mmap_id == mapping)
+        {
+          list_remove (e);
+          free_mmap_entry (entry);
+          return;
+        }
+    }
+}
+#endif
 
 static void
 syscall_halt (struct intr_frame *f)
@@ -490,6 +699,31 @@ syscall_close (struct intr_frame *f)
   close (fd);
 }
 
+#ifdef VM
+static void
+syscall_mmap (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp, 4 * 3))
+    exit (-1);
+
+  int fd = *((int *)(f->esp + 4));
+  void *addr = *((void **)(f->esp + 8));
+
+  f->eax = mmap (fd, addr);
+}
+
+static void
+syscall_munmap (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp, 4 * 2))
+    exit (-1);
+
+  mapid_t mapping = *((mapid_t *)(f->esp + 4));
+
+  munmap (mapping);
+}
+#endif
+
 void
 syscall_init (void)
 {
@@ -508,6 +742,12 @@ syscall_init (void)
   syscall_handlers[SYS_SEEK] = &syscall_seek;
   syscall_handlers[SYS_TELL] = &syscall_tell;
   syscall_handlers[SYS_CLOSE] = &syscall_close;
+#ifdef VM
+  syscall_handlers[SYS_MMAP] = &syscall_mmap;
+  syscall_handlers[SYS_MUNMAP] = &syscall_munmap;
+
+  init_mmapid_pool ();
+#endif
   // init filesys_lock
   lock_init (&filesys_lock);
   // init file_list
@@ -521,8 +761,11 @@ syscall_handler (struct intr_frame *f)
 {
   if (!user_memory_check (f->esp, 4))
     exit (-1);
+  now_esp = f->esp;
   uint32_t syscall_num = *((uint32_t *)f->esp);
   if (syscall_num >= SYSCALL_NUM)
+    exit (-1);
+  if (syscall_handlers[syscall_num] == NULL)
     exit (-1);
   syscall_handlers[syscall_num](f);
 }
@@ -534,9 +777,14 @@ syscall_handler (struct intr_frame *f)
 static int
 get_user_byte (const uint8_t *uaddr)
 {
-  int result;
-  asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
-  return result;
+  // int result;
+  // asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
+  // return result;
+
+  if (uaddr == NULL || !is_user_vaddr (uaddr) || uaddr < (uint8_t *)0x08048000)
+    return -1;
+
+  return *uaddr;
 }
 
 /* Writes BYTE to user address UDST.
@@ -565,8 +813,20 @@ user_memory_check (void *uaddr, int bytes)
 
   for (int i = 0; i < bytes; i++)
     {
-      if (pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
+      if (!is_user_vaddr (uaddr + i))
         return false;
+
+      /* Page is not present. */
+      if (pagedir_get_page (thread_current ()->pagedir, uaddr + i) == NULL)
+        {
+#ifdef VM
+          if (!try_to_get_page (uaddr + i, now_esp))
+            return false;
+#else
+          return false;
+#endif
+        }
+
       if (get_user_byte ((uint8_t *)(uaddr + i)) == -1)
         {
           intr_set_level (old_level);
@@ -584,12 +844,20 @@ user_string_memory_check (char *uaddr)
   old_level = intr_disable ();
   for (int i = 0;; i++)
     {
-      if (((void *)uaddr + i) >= PHYS_BASE
-          || pagedir_get_page(thread_current()->pagedir, uaddr + i) == NULL)
+      if (!is_user_vaddr (uaddr + i))
+        return false;
+
+      /* Page is not present. */
+      if (pagedir_get_page (thread_current ()->pagedir, uaddr + i) == NULL)
         {
-          intr_set_level (old_level);
+#ifdef VM
+          if (!try_to_get_page (uaddr + i, now_esp))
+            return false;
+#else
           return false;
+#endif
         }
+
       int value = get_user_byte ((uint8_t *)(uaddr + i));
       if (value == 0 || value == -1)
         {
@@ -626,7 +894,7 @@ find_thread_with_tid (struct thread *t, void *aux)
     }
 }
 
-void 
+void
 find_process_with_pid (struct process_status *pcb, void *aux)
 {
   struct find_process *find_process;
@@ -647,7 +915,8 @@ child_process_foreach (struct thread *t, process_action_func *func, void *aux)
   for (e = list_begin (&t->child_process_list);
        e != list_end (&t->child_process_list); e = list_next (e))
     {
-      struct process_status *pcb = list_entry (e, struct process_status, process_elem);
+      struct process_status *pcb
+          = list_entry (e, struct process_status, process_elem);
       func (pcb, aux);
     }
 }

@@ -37,6 +37,10 @@
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
+#ifdef VM
+#include "vm/frame.h"
+#include "vm/swap.h"
+#endif
 
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -70,7 +74,7 @@ static void locate_block_devices (void);
 static void locate_block_device (enum block_type, const char *name);
 #endif
 
-int main (void) NO_RETURN;
+// int main (void) NO_RETURN;
 
 /* Pintos main program. */
 int
@@ -127,16 +131,26 @@ main (void)
   filesys_init (format_filesys);
 #endif
 
+#ifdef VM
+  frame_table_init ();
+  swap_init ();
+#endif
+
   printf ("Boot complete.\n");
   
   /* Run actions specified on kernel command line. */
   run_actions (argv);
 
   /* Finish up. */
+#ifdef VM
+  swap_destory ();
+#endif
   shutdown ();
   thread_exit ();
+
+  return 0;
 }
-
+
 /* Clear the "BSS", a segment that should be initialized to
    zeros.  It isn't actually stored on disk or zeroed by the
    kernel loader, so we have to zero it ourselves.
