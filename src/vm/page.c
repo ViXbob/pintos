@@ -286,6 +286,8 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
       lock_release (&sup_page_table_entry->lock);
       return false;
     }
+  
+  sup_page_table_entry->access_time = timer_ticks ();
 
   read_frame_from_block (frame_table_entry, sup_page_table_entry->swap_index);
   sup_page_table_entry->swap_index = NOT_IN_SWAP;

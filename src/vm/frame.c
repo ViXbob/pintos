@@ -66,8 +66,6 @@ frame_access_time_less (const struct list_elem *a, const struct list_elem *b,
     {
       return page_a->writable;
     }
-  if (is_kernel_vaddr (page_a->addr) != is_kernel_vaddr (page_b->addr))
-    return !is_kernel_vaddr (page_a->addr);
   return less_than;
 }
 
@@ -113,7 +111,7 @@ frame_get_page (struct sup_page_table_entry *sup_page_table_entry)
       frame_table_entry->sup_page_table_entry = sup_page_table_entry;
       lock_release (&sup_page_table_entry->lock);
 
-      sup_page_table_entry->access_time = timer_ticks ();
+      // sup_page_table_entry->access_time = timer_ticks ();
 
       return frame_table_entry;
     }
@@ -135,7 +133,7 @@ frame_get_page (struct sup_page_table_entry *sup_page_table_entry)
   list_push_back (&frame_table_list, &frame_table_entry->elem);
   lock_release (&frame_table_lock);
 
-  sup_page_table_entry->access_time = timer_ticks ();
+  // sup_page_table_entry->access_time = timer_ticks ();
 
   return frame_table_entry;
 }
