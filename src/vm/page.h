@@ -35,6 +35,10 @@ void sup_page_table_init (sup_page_table *sup_page_table);
  * the memory allocated by sup_page_table_init. */
 void sup_page_table_free (sup_page_table *sup_page_table);
 
+/* Find entry with specific virtual address. */
+struct sup_page_table_entry *sup_page_table_find_entry (sup_page_table *table,
+                                         void *target_addr);
+
 /* Try to get a page at fault address. From file or swap or for growing stack.
  */
 bool try_to_get_page (void *fault_addr, void *esp);

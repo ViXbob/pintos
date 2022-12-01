@@ -164,6 +164,7 @@ start_process (void *para_passing_)
 #ifdef VM
   /* Initialize supplementary page table. */
   sup_page_table_init (&thread_current ()->sup_page_table);
+  list_init (&thread_current ()->mmap_list);
 #endif
 
   /* Initialize interrupt frame and load executable. */

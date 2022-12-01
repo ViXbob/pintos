@@ -142,7 +142,9 @@ main (void)
   run_actions (argv);
 
   /* Finish up. */
+#ifdef VM
   swap_destory ();
+#endif
   shutdown ();
   thread_exit ();
 

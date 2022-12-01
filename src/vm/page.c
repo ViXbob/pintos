@@ -29,10 +29,6 @@ void sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED);
 struct sup_page_table_entry *new_sup_page_table_entry (void *addr,
                                                        uint64_t access_time);
 
-/* Find entry with specific virtual address. */
-struct sup_page_table_entry *find_entry (sup_page_table *table,
-                                         void *target_addr);
-
 /* Load page from file. */
 bool load_from_file (struct sup_page_table_entry *sup_page_table_entry);
 
@@ -111,7 +107,7 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
 }
 
 struct sup_page_table_entry *
-find_entry (sup_page_table *table, void *target_addr)
+sup_page_table_find_entry (sup_page_table *table, void *target_addr)
 {
   /* table or target address is empty. */
   if (table == NULL || target_addr == NULL)
@@ -140,7 +136,7 @@ try_to_get_page (void *fault_addr, void *esp)
 
   struct thread *t = thread_current ();
   struct sup_page_table_entry *entry
-      = find_entry (&t->sup_page_table, fault_addr);
+      = sup_page_table_find_entry (&t->sup_page_table, fault_addr);
 
   /* Page is not found, grow stack. */
   if (entry == NULL)
