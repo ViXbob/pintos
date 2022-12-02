@@ -18,6 +18,8 @@
 #include "vm/frame.h"
 #include "vm/page.h"
 #include "vm/swap.h"
+extern bool free_frame_table_entry (struct frame_table_entry *entry,
+                                    void *target_addr);
 #endif
 
 /* Process identifier. */
@@ -468,11 +470,13 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
             }
 
           /* If this page is present, we should delete it. */
-          void *kpage = pagedir_get_page (t->pagedir, addr);
-          if (kpage != NULL)
+          if (sup_page_table_entry->frame_table_entry != NULL)
             {
-              frame_free_page (kpage);
-              pagedir_clear_page (t->pagedir, addr);
+              free_frame_table_entry (
+                  sup_page_table_entry->frame_table_entry,
+                  sup_page_table_entry->frame_table_entry->frame_addr);
+              pagedir_clear_page (thread_current ()->pagedir,
+                                  sup_page_table_entry->addr);
             }
 
           /* Delete it from supplementary page table. */

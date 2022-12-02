@@ -13,6 +13,8 @@
 
 extern struct lock filesys_lock;
 extern bool install_page (void *, void *, bool);
+extern bool free_frame_table_entry (struct frame_table_entry *entry,
+                                    void *target_addr);
 
 /* Hash function of supplementary page table. */
 unsigned sup_page_table_hash_func (const struct hash_elem *e,
@@ -74,19 +76,14 @@ sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
     swap_release_slot (sup_page_table_entry->swap_index);
   else if (sup_page_table_entry->from_file == false)
     {
-      void *kpage = pagedir_get_page (thread_current ()->pagedir, sup_page_table_entry->addr);
-      // printf ("thread %d purge %p, %p\n", thread_tid (), sup_page_table_entry->addr, kpage);
-      if (kpage != NULL)
-        {
-          frame_free_page (kpage);
-          pagedir_clear_page (thread_current ()->pagedir, sup_page_table_entry->addr);
-        }
-      else 
-        {
-          // PANIC ("Page must be in memory.");
-        }
+      ASSERT (sup_page_table_entry->frame_table_entry != NULL);
+      free_frame_table_entry (
+          sup_page_table_entry->frame_table_entry,
+          sup_page_table_entry->frame_table_entry->frame_addr);
+      pagedir_clear_page (thread_current ()->pagedir,
+                          sup_page_table_entry->addr);
     }
-  else 
+  else
     {
       /* This page never be actually accessed. */
     }
@@ -115,6 +112,7 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
 
   /* Virtual address must be page-aligned. */
   entry->addr = pg_round_down (addr);
+  entry->frame_table_entry = NULL;
   entry->access_time = access_time;
   entry->writable = true;
   entry->dirty = false;
@@ -217,7 +215,7 @@ grow_stack (void *fault_addr)
   if (!install_page (upage, kpage, true))
     {
       free (sup_page_table_entry);
-      frame_free_page (kpage);
+      free_frame_table_entry (frame_table_entry, kpage);
       return false;
     }
 
@@ -225,7 +223,7 @@ grow_stack (void *fault_addr)
   if (hash_insert (&t->sup_page_table, &sup_page_table_entry->elem) != NULL)
     {
       free (sup_page_table_entry);
-      frame_free_page (kpage);
+      free_frame_table_entry (frame_table_entry, kpage);
       /* Must clear the page you installed. */
       pagedir_clear_page (t->pagedir, upage);
       return false;
@@ -258,20 +256,20 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   bool writable = sup_page_table_entry->writable;
 
   lock_acquire (&sup_page_table_entry->lock);
-  // printf ("page.c: Ready to acquire filesys\n");
+
   lock_acquire (&filesys_lock);
   file_seek (file, offset);
 
   /* File read failed. */
   if (file_read (file, kpage, page_read_bytes) != (int)page_read_bytes)
     {
-      frame_free_page (kpage);
-      // printf ("page.c: Ready to release filesys\n");
+      free_frame_table_entry (frame_table_entry, kpage);
+
       lock_release (&filesys_lock);
       lock_release (&sup_page_table_entry->lock);
       return false;
     }
-  // printf ("page.c: Ready to release filesys\n");
+
   lock_release (&filesys_lock);
 
   /* Set the zero bytes. */
@@ -279,7 +277,7 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
 
   if (!install_page (upage, kpage, writable))
     {
-      frame_free_page (kpage);
+      free_frame_table_entry (frame_table_entry, kpage);
       lock_release (&sup_page_table_entry->lock);
       return false;
     }
@@ -313,7 +311,7 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
 
   if (!success)
     {
-      frame_free_page (kpage);
+      free_frame_table_entry (frame_table_entry, kpage);
       lock_release (&sup_page_table_entry->lock);
       return false;
     }

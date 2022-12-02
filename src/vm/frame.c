@@ -7,9 +7,9 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
+#include <hash.h>
 #include <list.h>
 #include <stdio.h>
-#include <hash.h>
 
 /* Frame table lock, you should lock when using frame list. */
 struct lock frame_table_lock;
@@ -139,9 +139,9 @@ find_one_to_evict (void)
 struct frame_table_entry *
 evict_one_frame (void)
 {
-  // printf ("start evict.\n");
   struct frame_table_entry *frame_table_entry = find_one_to_evict ();
   lock_acquire (&frame_table_lock);
+  frame_table_entry->sup_page_table_entry->frame_table_entry = NULL;
   frame_table_entry->sup_page_table_entry->dirty
       |= pagedir_is_dirty (frame_table_entry->owner->pagedir,
                            frame_table_entry->sup_page_table_entry->addr);
