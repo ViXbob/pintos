@@ -44,7 +44,7 @@ enum
   CLOCK
 };
 
-#define EVICT_METHOD CLOCK
+#define EVICT_METHOD LRU
 
 static struct list_elem *clock_hand;
 
@@ -90,10 +90,6 @@ frame_access_time_less (const struct list_elem *a, const struct list_elem *b,
   struct sup_page_table_entry *page_a = frame_a->sup_page_table_entry;
   struct sup_page_table_entry *page_b = frame_b->sup_page_table_entry;
   bool less_than = page_a->access_time < page_b->access_time;
-  if (page_a->writable != page_b->writable)
-    {
-      return page_a->writable;
-    }
   return less_than;
 }
 
@@ -114,6 +110,8 @@ find_one_to_evict (void)
       {
         if (list_empty (&frame_table_list))
           return NULL;
+        lock_acquire (&frame_table_lock);
+        clock_hand = list_head (&frame_table_list);
         struct frame_table_entry *frame_table_entry = NULL;
         while (frame_table_entry == NULL)
           {
@@ -127,12 +125,8 @@ find_one_to_evict (void)
                 frame_table_entry->sup_page_table_entry->ref_bit = 0;
                 frame_table_entry = NULL;
               }
-            else if (clock_hand == list_begin (&frame_table_list))
-              {
-                frame_table_entry = NULL;
-              }
           }
-        // printf ("writable is %d\n", frame_table_entry->sup_page_table_entry->writable);
+        lock_release (&frame_table_lock);
         return frame_table_entry;
       }
     default:
