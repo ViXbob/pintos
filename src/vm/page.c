@@ -70,22 +70,30 @@ sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
 {
   struct sup_page_table_entry *sup_page_table_entry
       = hash_entry (e, struct sup_page_table_entry, elem);
-
-  /* Release corresponding space. */
-  if (sup_page_table_entry->swap_index != NOT_IN_SWAP)
-    swap_release_slot (sup_page_table_entry->swap_index);
-  else if (sup_page_table_entry->from_file == false)
+  ASSERT (!sup_page_table_entry->is_mmap);
+  switch (sup_page_table_entry->status)
     {
-      ASSERT (sup_page_table_entry->frame_table_entry != NULL);
-      free_frame_table_entry (
-          sup_page_table_entry->frame_table_entry,
-          sup_page_table_entry->frame_table_entry->frame_addr);
-      pagedir_clear_page (thread_current ()->pagedir,
-                          sup_page_table_entry->addr);
-    }
-  else
-    {
-      /* This page never be actually accessed. */
+    case IN_MEMORY:
+      {
+        ASSERT (sup_page_table_entry->frame_table_entry != NULL);
+        free_frame_table_entry (
+            sup_page_table_entry->frame_table_entry,
+            sup_page_table_entry->frame_table_entry->frame_addr);
+        pagedir_clear_page (thread_current ()->pagedir,
+                            sup_page_table_entry->addr);
+        break;
+      }
+    case IN_SWAP:
+      {
+        swap_release_slot (sup_page_table_entry->swap_index);
+        break;
+      }
+    case IN_FILESYS:
+        break;
+    case INVALID:
+        PANIC ("Sup page table entry should not be invalid.");
+    default:
+        NOT_REACHED ();
     }
 
   free (sup_page_table_entry);
@@ -112,13 +120,13 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
 
   /* Virtual address must be page-aligned. */
   entry->addr = pg_round_down (addr);
+  entry->status = INVALID;
   entry->frame_table_entry = NULL;
   entry->access_time = access_time;
   entry->writable = true;
   entry->dirty = false;
   entry->ref_bit = 1;
   entry->swap_index = NOT_IN_SWAP;
-  entry->from_file = false;
   entry->file = NULL;
   entry->offset = 0;
   entry->read_bytes = 0;
@@ -158,11 +166,11 @@ try_to_get_page (void *fault_addr, void *esp)
     return false;
 
   struct thread *t = thread_current ();
-  struct sup_page_table_entry *entry
+  struct sup_page_table_entry *sup_page_table_entry
       = sup_page_table_find_entry (&t->sup_page_table, fault_addr);
 
   /* Page is not found, grow stack. */
-  if (entry == NULL)
+  if (sup_page_table_entry == NULL)
     {
       /* This address does not appear to be a stack access. */
       if (fault_addr < esp - 32)
@@ -170,19 +178,21 @@ try_to_get_page (void *fault_addr, void *esp)
 
       return grow_stack (fault_addr);
     }
-  else if (entry->from_file)
-    {
-      return load_from_file (entry);
-    }
-  else if (entry->swap_index != NOT_IN_SWAP)
-    {
-      /* Have not implemented swap yet.*/
-      return load_from_swap (entry);
-    }
   else
     {
-      /* Impossible. */
-      NOT_REACHED ();
+      switch (sup_page_table_entry->status)
+        {
+        case IN_MEMORY:
+          PANIC ("Impossible");
+        case IN_SWAP:
+          return load_from_swap (sup_page_table_entry);
+        case IN_FILESYS:
+          return load_from_file (sup_page_table_entry);
+        case INVALID:
+          PANIC ("Sup page table entry should not be invalid.");
+        default:
+          NOT_REACHED ();
+        }
     }
 }
 
@@ -229,6 +239,7 @@ grow_stack (void *fault_addr)
       return false;
     }
 
+  sup_page_table_entry->status = IN_MEMORY;
   sup_page_table_entry->frame_table_entry = frame_table_entry;
 
   return true;
@@ -282,9 +293,8 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
       return false;
     }
 
+  sup_page_table_entry->status = IN_MEMORY;
   sup_page_table_entry->frame_table_entry = frame_table_entry;
-  /* One page must be lazily loaded from file once. */
-  sup_page_table_entry->from_file = false;
 
   lock_release (&sup_page_table_entry->lock);
   return true;
@@ -321,6 +331,7 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
 
   read_frame_from_block (sup_page_table_entry, frame_table_entry->frame_addr,
                          sup_page_table_entry->swap_index);
+  sup_page_table_entry->status = IN_MEMORY;
   sup_page_table_entry->swap_index = NOT_IN_SWAP;
 
   sup_page_table_entry->frame_table_entry = frame_table_entry;
@@ -351,8 +362,9 @@ lazy_load_segment (struct file *file, int32_t ofs, uint8_t *upage,
       if (sup_page_table_entry == NULL)
         return false;
 
+      sup_page_table_entry->status = IN_FILESYS;
+
       /* Used for file load. */
-      sup_page_table_entry->from_file = true;
       sup_page_table_entry->file = file;
       sup_page_table_entry->offset = offset;
       sup_page_table_entry->read_bytes = page_read_bytes;

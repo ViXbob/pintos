@@ -441,46 +441,36 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
       if (sup_page_table_entry != NULL)
         {
           sup_page_table_entry->dirty |= pagedir_is_dirty (t->pagedir, addr);
-          /* If the page is dirty, we need write it back to file. */
-          if (sup_page_table_entry->dirty)
-            {
-              if (sup_page_table_entry->swap_index == NOT_IN_SWAP
-                  && sup_page_table_entry->frame_table_entry != NULL)
-                {
-                  lock_acquire (&filesys_lock);
-                  file_write_at (sup_page_table_entry->file, addr,
-                                 sup_page_table_entry->read_bytes,
-                                 sup_page_table_entry->offset);
-                  lock_release (&filesys_lock);
-                }
-              else if (sup_page_table_entry->from_file == false)
-                {
-                  PANIC ("mmap memory should not in swap.");
-                  void *tmp_kpage = palloc_get_page (PAL_ZERO);
-                  /* Loaded page either be in swap partion or frame table. */
-                  read_frame_from_block (sup_page_table_entry, tmp_kpage,
-                                         sup_page_table_entry->swap_index);
-                  lock_acquire (&filesys_lock);
-                  file_write_at (sup_page_table_entry->file, tmp_kpage,
-                                 sup_page_table_entry->read_bytes,
-                                 sup_page_table_entry->offset);
-                  lock_release (&filesys_lock);
-                }
-              else
-                {
-                  /* Mapped memory not be accessed actually. */
-                  ASSERT (sup_page_table_entry->from_file == true);
-                }
-            }
 
-          /* If this page is present, we should delete it. */
-          if (sup_page_table_entry->frame_table_entry != NULL)
+          switch (sup_page_table_entry->status)
             {
-              free_frame_table_entry (
-                  sup_page_table_entry->frame_table_entry,
-                  sup_page_table_entry->frame_table_entry->frame_addr);
-              pagedir_clear_page (thread_current ()->pagedir,
-                                  sup_page_table_entry->addr);
+            case IN_MEMORY:
+              {
+                ASSERT (sup_page_table_entry->frame_table_entry != NULL);
+                /* If the page is dirty, we need write it back to file. */
+                if (sup_page_table_entry->dirty)
+                  {
+                    lock_acquire (&filesys_lock);
+                    file_write_at (sup_page_table_entry->file, addr,
+                                   sup_page_table_entry->read_bytes,
+                                   sup_page_table_entry->offset);
+                    lock_release (&filesys_lock);
+                  }
+                free_frame_table_entry (
+                    sup_page_table_entry->frame_table_entry,
+                    sup_page_table_entry->frame_table_entry->frame_addr);
+                pagedir_clear_page (thread_current ()->pagedir,
+                                    sup_page_table_entry->addr);
+                break;
+              }
+            case IN_SWAP:
+                PANIC ("mmap memory should not in swap.");
+            case IN_FILESYS:
+                break;
+            case INVALID:
+                PANIC ("Sup page table entry should not be invalid.");
+            default:
+                NOT_REACHED ();
             }
 
           /* Delete it from supplementary page table. */

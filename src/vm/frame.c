@@ -148,9 +148,7 @@ evict_one_frame (void)
   lock_acquire (&frame_table_lock);
   sup_page_table_entry->dirty |= pagedir_is_dirty (
       frame_table_entry->owner->pagedir, sup_page_table_entry->addr);
-  ASSERT ((int)(sup_page_table_entry->from_file)
-              + (int)(sup_page_table_entry->swap_index != NOT_IN_SWAP)
-          == 0);
+  ASSERT (sup_page_table_entry->status == IN_MEMORY);
   if (sup_page_table_entry->is_mmap && sup_page_table_entry->dirty)
     {
       lock_acquire (&filesys_lock);
@@ -158,20 +156,20 @@ evict_one_frame (void)
                      sup_page_table_entry->read_bytes,
                      sup_page_table_entry->offset);
       lock_release (&filesys_lock);
+      sup_page_table_entry->status = IN_FILESYS;
       sup_page_table_entry->dirty = false;
-      sup_page_table_entry->from_file = true;
     }
   else
     {
+      sup_page_table_entry->status = IN_SWAP;
       write_frame_to_block (sup_page_table_entry,
                             frame_table_entry->frame_addr);
     }
   sup_page_table_entry->frame_table_entry = NULL;
   pagedir_clear_page (frame_table_entry->owner->pagedir,
                       sup_page_table_entry->addr);
-  ASSERT ((int)(sup_page_table_entry->from_file)
-              + (int)(sup_page_table_entry->swap_index != NOT_IN_SWAP)
-          == 1);
+  ASSERT (sup_page_table_entry->status == IN_FILESYS
+          || sup_page_table_entry->status == IN_SWAP);
   lock_release (&frame_table_lock);
   return frame_table_entry;
 }

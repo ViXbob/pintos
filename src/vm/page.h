@@ -10,9 +10,18 @@
 
 typedef struct hash sup_page_table;
 
+enum sup_page_status
+{
+  INVALID,
+  IN_MEMORY,
+  IN_SWAP,
+  IN_FILESYS,
+};
+
 struct sup_page_table_entry
 {
-  void *addr; /* Virtual address. */
+  void *addr;                  /* Virtual address. */
+  enum sup_page_status status; /* Page status. */
   struct frame_table_entry
       *frame_table_entry; /* Corresponding frame table entry. */
   uint64_t access_time;  /* Lastest time the page is accessed. Used for LRU. */
@@ -23,7 +32,6 @@ struct sup_page_table_entry
   /* Used for swap. */
   int swap_index; /* Index of the beginning sector in swap file. */
   /* Used for file load. */
-  bool from_file;      /* Whethear this page is from file. */
   struct file *file;   /* File it belongs. */
   int32_t offset;      /* File offset. */
   uint32_t read_bytes; /* Number of bytes read from file. */
