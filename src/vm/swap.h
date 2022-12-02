@@ -10,6 +10,9 @@
 /* Initialize the swap partition. */
 void swap_init (void);
 
+/* Release corresponding slot (one page) in swap by given sector index. */
+void swap_release_slot (int sector_index);
+
 /* Deallocate all resources of swap partition. */
 void swap_destory (void);
 

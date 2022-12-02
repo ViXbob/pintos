@@ -16,9 +16,6 @@ static struct block *global_swap_block;
 
 #define SECTOR_PER_PAGE (PGSIZE / BLOCK_SECTOR_SIZE)
 
-/* Release corresponding slot (one page) in swap by given sector index. */
-void swap_release_slot (int sector_index);
-
 /* Get a new swap slot. */
 int get_new_swap_slot (void);
 
