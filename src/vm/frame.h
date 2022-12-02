@@ -10,7 +10,7 @@ struct frame_table_entry
   struct sup_page_table_entry *
       sup_page_table_entry; /* Corresponding supplementary page table entry. */
   struct list_elem elem;    /* List element in frame table. */
-} frame_table_entry;
+};
 
 /* Initialize frame table. */
 void frame_table_init (void);
