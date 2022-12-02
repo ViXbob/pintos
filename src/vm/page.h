@@ -1,6 +1,7 @@
 #ifndef VM_PAGE_H
 #define VM_PAGE_H
 #include "debug.h"
+#include "frame.h"
 #include "page.h"
 #include "threads/synch.h"
 #include <hash.h>
@@ -11,7 +12,9 @@ typedef struct hash sup_page_table;
 
 struct sup_page_table_entry
 {
-  void *addr;            /* Virtual address. */
+  void *addr; /* Virtual address. */
+  struct frame_table_entry
+      *frame_table_entry; /* Corresponding frame table entry. */
   uint64_t access_time;  /* Lastest time the page is accessed. Used for LRU. */
   struct hash_elem elem; /* Hash table element. */
   bool writable;         /* Whether this page can be written. */

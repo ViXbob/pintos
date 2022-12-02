@@ -69,6 +69,28 @@ sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
   struct sup_page_table_entry *sup_page_table_entry
       = hash_entry (e, struct sup_page_table_entry, elem);
 
+  /* Release corresponding space. */
+  if (sup_page_table_entry->swap_index != NOT_IN_SWAP)
+    swap_release_slot (sup_page_table_entry->swap_index);
+  else if (sup_page_table_entry->from_file == false)
+    {
+      void *kpage = pagedir_get_page (thread_current ()->pagedir, sup_page_table_entry->addr);
+      // printf ("thread %d purge %p, %p\n", thread_tid (), sup_page_table_entry->addr, kpage);
+      if (kpage != NULL)
+        {
+          frame_free_page (kpage);
+          pagedir_clear_page (thread_current ()->pagedir, sup_page_table_entry->addr);
+        }
+      else 
+        {
+          // PANIC ("Page must be in memory.");
+        }
+    }
+  else 
+    {
+      /* This page never be actually accessed. */
+    }
+
   free (sup_page_table_entry);
 }
 
@@ -81,6 +103,7 @@ sup_page_table_free (sup_page_table *sup_page_table)
 struct sup_page_table_entry *
 new_sup_page_table_entry (void *addr, uint64_t access_time)
 {
+  ASSERT (is_user_vaddr (addr));
   /* Allocate memory for new supplementary page table entry. You must free it
    * properly. */
   struct sup_page_table_entry *entry = (struct sup_page_table_entry *)malloc (
@@ -93,7 +116,7 @@ new_sup_page_table_entry (void *addr, uint64_t access_time)
   /* Virtual address must be page-aligned. */
   entry->addr = pg_round_down (addr);
   entry->access_time = access_time;
-  entry->writable = false;
+  entry->writable = true;
   entry->dirty = false;
   entry->ref_bit = 1;
   entry->swap_index = NOT_IN_SWAP;
@@ -208,6 +231,8 @@ grow_stack (void *fault_addr)
       return false;
     }
 
+  sup_page_table_entry->frame_table_entry = frame_table_entry;
+
   return true;
 }
 
@@ -259,6 +284,7 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
       return false;
     }
 
+  sup_page_table_entry->frame_table_entry = frame_table_entry;
   /* One page must be lazily loaded from file once. */
   sup_page_table_entry->from_file = false;
 
@@ -299,6 +325,7 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
                          sup_page_table_entry->swap_index);
   sup_page_table_entry->swap_index = NOT_IN_SWAP;
 
+  sup_page_table_entry->frame_table_entry = frame_table_entry;
   lock_release (&sup_page_table_entry->lock);
   return true;
 }
