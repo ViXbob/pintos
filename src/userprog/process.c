@@ -319,11 +319,6 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-#ifdef VM
-  /* Free supplementary page table. */
-  sup_page_table_free (&cur->sup_page_table);
-#endif
-
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;

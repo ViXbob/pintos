@@ -366,6 +366,9 @@ thread_exit (void)
           = list_entry (list_begin (&t->mmap_list), struct mmap_entry, elem);
       munmap (mmap_entry->mmap_id);
     }
+
+  /* Free supplementary page table. */
+  sup_page_table_free (&t->sup_page_table);
 #endif
 
   // Print exit status.
