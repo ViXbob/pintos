@@ -444,29 +444,33 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
           /* If the page is dirty, we need write it back to file. */
           if (sup_page_table_entry->dirty)
             {
-              lock_acquire (&filesys_lock);
-              if (sup_page_table_entry->swap_index == NOT_IN_SWAP)
+              if (sup_page_table_entry->swap_index == NOT_IN_SWAP
+                  && sup_page_table_entry->frame_table_entry != NULL)
                 {
+                  lock_acquire (&filesys_lock);
                   file_write_at (sup_page_table_entry->file, addr,
                                  sup_page_table_entry->read_bytes,
                                  sup_page_table_entry->offset);
+                  lock_release (&filesys_lock);
                 }
               else if (sup_page_table_entry->from_file == false)
                 {
+                  PANIC ("mmap memory should not in swap.");
                   void *tmp_kpage = palloc_get_page (PAL_ZERO);
                   /* Loaded page either be in swap partion or frame table. */
                   read_frame_from_block (sup_page_table_entry, tmp_kpage,
                                          sup_page_table_entry->swap_index);
+                  lock_acquire (&filesys_lock);
                   file_write_at (sup_page_table_entry->file, tmp_kpage,
                                  sup_page_table_entry->read_bytes,
                                  sup_page_table_entry->offset);
+                  lock_release (&filesys_lock);
                 }
               else
                 {
                   /* Mapped memory not be accessed actually. */
                   ASSERT (sup_page_table_entry->from_file == true);
                 }
-              lock_release (&filesys_lock);
             }
 
           /* If this page is present, we should delete it. */

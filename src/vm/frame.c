@@ -7,9 +7,12 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
+#include "userprog/syscall.h"
 #include <hash.h>
 #include <list.h>
 #include <stdio.h>
+
+extern struct lock filesys_lock;
 
 /* Frame table lock, you should lock when using frame list. */
 struct lock frame_table_lock;
@@ -140,15 +143,35 @@ struct frame_table_entry *
 evict_one_frame (void)
 {
   struct frame_table_entry *frame_table_entry = find_one_to_evict ();
+  struct sup_page_table_entry *sup_page_table_entry
+      = frame_table_entry->sup_page_table_entry;
   lock_acquire (&frame_table_lock);
-  frame_table_entry->sup_page_table_entry->frame_table_entry = NULL;
-  frame_table_entry->sup_page_table_entry->dirty
-      |= pagedir_is_dirty (frame_table_entry->owner->pagedir,
-                           frame_table_entry->sup_page_table_entry->addr);
-  write_frame_to_block (frame_table_entry->sup_page_table_entry,
-                        frame_table_entry->frame_addr);
+  sup_page_table_entry->dirty |= pagedir_is_dirty (
+      frame_table_entry->owner->pagedir, sup_page_table_entry->addr);
+  ASSERT ((int)(sup_page_table_entry->from_file)
+              + (int)(sup_page_table_entry->swap_index != NOT_IN_SWAP)
+          == 0);
+  if (sup_page_table_entry->is_mmap && sup_page_table_entry->dirty)
+    {
+      lock_acquire (&filesys_lock);
+      file_write_at (sup_page_table_entry->file, sup_page_table_entry->addr,
+                     sup_page_table_entry->read_bytes,
+                     sup_page_table_entry->offset);
+      lock_release (&filesys_lock);
+      sup_page_table_entry->dirty = false;
+      sup_page_table_entry->from_file = true;
+    }
+  else
+    {
+      write_frame_to_block (sup_page_table_entry,
+                            frame_table_entry->frame_addr);
+    }
+  sup_page_table_entry->frame_table_entry = NULL;
   pagedir_clear_page (frame_table_entry->owner->pagedir,
-                      frame_table_entry->sup_page_table_entry->addr);
+                      sup_page_table_entry->addr);
+  ASSERT ((int)(sup_page_table_entry->from_file)
+              + (int)(sup_page_table_entry->swap_index != NOT_IN_SWAP)
+          == 1);
   lock_release (&frame_table_lock);
   return frame_table_entry;
 }
@@ -220,11 +243,11 @@ free_frame_table_entry (struct frame_table_entry *entry, void *target_addr)
       /* Remove this entry from frame table list. */
       lock_acquire (&frame_table_lock);
       list_remove (&entry->elem);
-      lock_release (&frame_table_lock);
       /* Free the page this entry holds. */
       palloc_free_page (entry->frame_addr);
       /* Free the memory this entry occupies. */
       free (entry);
+      lock_release (&frame_table_lock);
       return true;
     }
   return false;
