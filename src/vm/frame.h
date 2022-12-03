@@ -11,7 +11,7 @@ struct frame_table_entry
   struct sup_page_table_entry *
       sup_page_table_entry; /* Corresponding supplementary page table entry. */
   struct list_elem elem;    /* List element in frame table. */
-  struct lock lock;
+  struct lock lock;         /* Frame table entry lock. */
 };
 
 /* Initialize frame table. */
