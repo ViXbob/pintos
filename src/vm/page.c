@@ -270,10 +270,9 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   bool writable = sup_page_table_entry->writable;
 
   lock_acquire (&filesys_lock);
-  file_seek (file, offset);
 
   /* File read failed. */
-  if (file_read (file, kpage, page_read_bytes) != (int)page_read_bytes)
+  if (file_read_at (file, kpage, page_read_bytes, offset) != (int)page_read_bytes)
     {
       free_frame_table_entry (frame_table_entry, kpage);
       lock_release (&filesys_lock);

@@ -645,7 +645,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
     }
   return true;
 #else
-  file_seek (file, ofs);
   return lazy_load_segment (file, ofs, upage, read_bytes, zero_bytes, writable,
                             false);
 #endif
