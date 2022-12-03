@@ -38,9 +38,6 @@ void frame_table_foreach (frame_table_entry_action_func *action_func,
 bool free_frame_table_entry (struct frame_table_entry *entry,
                              void *target_addr);
 
-bool frame_access_time_less (const struct list_elem *a,
-                             const struct list_elem *b, void *aux UNUSED);
-
 enum
 {
   LRU,
@@ -68,32 +65,20 @@ new_frame_table_entry (void *frame_addr, struct thread *onwer,
                        struct sup_page_table_entry *sup_page_table_entry)
 {
   /* Allocate memory. You must free the memory you allocate. */
-  struct frame_table_entry *entry = malloc (sizeof (struct frame_table_entry));
+  struct frame_table_entry *frame_table_entry
+      = malloc (sizeof (struct frame_table_entry));
 
   /* malloc failed. */
-  if (entry == NULL)
+  if (frame_table_entry == NULL)
     return NULL;
 
   /* Initialize. */
-  entry->frame_addr = frame_addr;
-  entry->owner = onwer;
-  entry->sup_page_table_entry = sup_page_table_entry;
+  frame_table_entry->frame_addr = frame_addr;
+  frame_table_entry->owner = onwer;
+  frame_table_entry->sup_page_table_entry = sup_page_table_entry;
+  lock_init (&frame_table_entry->lock);
 
-  return entry;
-}
-
-bool
-frame_access_time_less (const struct list_elem *a, const struct list_elem *b,
-                        void *aux UNUSED)
-{
-  struct frame_table_entry *frame_a
-      = list_entry (a, struct frame_table_entry, elem);
-  struct frame_table_entry *frame_b
-      = list_entry (b, struct frame_table_entry, elem);
-  struct sup_page_table_entry *page_a = frame_a->sup_page_table_entry;
-  struct sup_page_table_entry *page_b = frame_b->sup_page_table_entry;
-  bool less_than = page_a->access_time < page_b->access_time;
-  return less_than;
+  return frame_table_entry;
 }
 
 struct frame_table_entry *
@@ -103,17 +88,36 @@ find_one_to_evict (void)
     {
     case LRU:
       {
-        struct list_elem *min_elem
-            = list_min (&frame_table_list, frame_access_time_less, NULL);
-        struct frame_table_entry *frame_table_entry
-            = list_entry (min_elem, struct frame_table_entry, elem);
-        return frame_table_entry;
+        struct list_elem *e;
+        struct frame_table_entry *min_frame_table_entry = NULL;
+
+        for (e = list_begin (&frame_table_list);
+             e != list_end (&frame_table_list); e = list_next (e))
+          {
+            struct frame_table_entry *frame_table_entry
+                = list_entry (e, struct frame_table_entry, elem);
+            if (!lock_held_by_current_thread (&frame_table_entry->lock)
+                && !lock_try_acquire (&frame_table_entry->lock))
+                  continue;
+            if (min_frame_table_entry == NULL
+                || frame_table_entry->sup_page_table_entry->access_time
+                        < min_frame_table_entry->sup_page_table_entry
+                              ->access_time)
+              {
+                if (min_frame_table_entry != NULL)
+                  lock_release (&min_frame_table_entry->lock);
+                min_frame_table_entry = frame_table_entry;
+              }
+            else
+              lock_release (&frame_table_entry->lock);
+          }
+        lock_release (&min_frame_table_entry->lock);
+        return min_frame_table_entry;
       }
     case CLOCK:
       {
         if (list_empty (&frame_table_list))
           return NULL;
-        lock_acquire (&frame_table_lock);
         clock_hand = list_head (&frame_table_list);
         struct frame_table_entry *frame_table_entry = NULL;
         while (frame_table_entry == NULL)
@@ -123,13 +127,17 @@ find_one_to_evict (void)
                               : list_next (clock_hand));
             frame_table_entry
                 = list_entry (clock_hand, struct frame_table_entry, elem);
+            if (!lock_held_by_current_thread (&frame_table_entry->lock)
+                && !lock_try_acquire (&frame_table_entry->lock))
+              continue;
             if (frame_table_entry->sup_page_table_entry->ref_bit)
               {
                 frame_table_entry->sup_page_table_entry->ref_bit = 0;
+                lock_release (&frame_table_entry->lock);
                 frame_table_entry = NULL;
               }
           }
-        lock_release (&frame_table_lock);
+        lock_release (&frame_table_entry->lock);
         return frame_table_entry;
       }
     default:
@@ -145,7 +153,8 @@ evict_one_frame (void)
   struct frame_table_entry *frame_table_entry = find_one_to_evict ();
   struct sup_page_table_entry *sup_page_table_entry
       = frame_table_entry->sup_page_table_entry;
-  lock_acquire (&frame_table_lock);
+  lock_acquire (&frame_table_entry->lock);
+  lock_acquire (&sup_page_table_entry->lock);
   sup_page_table_entry->dirty |= pagedir_is_dirty (
       frame_table_entry->owner->pagedir, sup_page_table_entry->addr);
   ASSERT (sup_page_table_entry->status == IN_MEMORY);
@@ -170,7 +179,8 @@ evict_one_frame (void)
                       sup_page_table_entry->addr);
   ASSERT (sup_page_table_entry->status == IN_FILESYS
           || sup_page_table_entry->status == IN_SWAP);
-  lock_release (&frame_table_lock);
+  lock_release (&sup_page_table_entry->lock);
+  lock_release (&frame_table_entry->lock);
   return frame_table_entry;
 }
 
@@ -234,18 +244,19 @@ frame_table_foreach (frame_table_entry_action_func *action_func, void *aux)
 }
 
 bool
-free_frame_table_entry (struct frame_table_entry *entry, void *target_addr)
+free_frame_table_entry (struct frame_table_entry *frame_table_entry,
+                        void *target_addr)
 {
-  if (entry->frame_addr == target_addr)
+  if (frame_table_entry->frame_addr == target_addr)
     {
       /* Remove this entry from frame table list. */
       lock_acquire (&frame_table_lock);
-      list_remove (&entry->elem);
-      /* Free the page this entry holds. */
-      palloc_free_page (entry->frame_addr);
-      /* Free the memory this entry occupies. */
-      free (entry);
+      list_remove (&frame_table_entry->elem);
       lock_release (&frame_table_lock);
+      /* Free the page this entry holds. */
+      palloc_free_page (frame_table_entry->frame_addr);
+      /* Free the memory this entry occupies. */
+      free (frame_table_entry);
       return true;
     }
   return false;

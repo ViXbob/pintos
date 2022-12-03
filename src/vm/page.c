@@ -70,6 +70,7 @@ sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
 {
   struct sup_page_table_entry *sup_page_table_entry
       = hash_entry (e, struct sup_page_table_entry, elem);
+  lock_acquire (&sup_page_table_entry->lock);
   ASSERT (!sup_page_table_entry->is_mmap);
   switch (sup_page_table_entry->status)
     {
@@ -95,7 +96,7 @@ sup_page_table_entry_free_func (struct hash_elem *e, void *aux UNUSED)
     default:
         NOT_REACHED ();
     }
-
+  lock_release (&sup_page_table_entry->lock);
   free (sup_page_table_entry);
 }
 
@@ -219,6 +220,7 @@ grow_stack (void *fault_addr)
       return false;
     }
 
+  lock_acquire (&frame_table_entry->lock);
   void *kpage = frame_table_entry->frame_addr;
   void *upage = sup_page_table_entry->addr;
 
@@ -241,7 +243,7 @@ grow_stack (void *fault_addr)
 
   sup_page_table_entry->status = IN_MEMORY;
   sup_page_table_entry->frame_table_entry = frame_table_entry;
-
+  lock_release (&frame_table_entry->lock);
   return true;
 }
 
@@ -251,11 +253,12 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   struct frame_table_entry *frame_table_entry
       = frame_get_page (sup_page_table_entry);
 
-  // printf ("good get frame page!\n");
-
   /* Fail to get new frame table entry. */
   if (frame_table_entry == NULL)
     return false;
+
+  lock_acquire (&frame_table_entry->lock);
+  lock_acquire (&sup_page_table_entry->lock);
 
   /* Variables used for file load. */
   void *kpage = frame_table_entry->frame_addr;
@@ -266,8 +269,6 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   size_t page_zero_bytes = sup_page_table_entry->zero_bytes;
   bool writable = sup_page_table_entry->writable;
 
-  lock_acquire (&sup_page_table_entry->lock);
-
   lock_acquire (&filesys_lock);
   file_seek (file, offset);
 
@@ -275,7 +276,6 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   if (file_read (file, kpage, page_read_bytes) != (int)page_read_bytes)
     {
       free_frame_table_entry (frame_table_entry, kpage);
-
       lock_release (&filesys_lock);
       lock_release (&sup_page_table_entry->lock);
       return false;
@@ -297,6 +297,7 @@ load_from_file (struct sup_page_table_entry *sup_page_table_entry)
   sup_page_table_entry->frame_table_entry = frame_table_entry;
 
   lock_release (&sup_page_table_entry->lock);
+  lock_release (&frame_table_entry->lock);
   return true;
 }
 
@@ -312,6 +313,7 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
   if (frame_table_entry == NULL)
     return false;
 
+  lock_acquire (&frame_table_entry->lock);
   lock_acquire (&sup_page_table_entry->lock);
 
   void *upage = sup_page_table_entry->addr;
@@ -336,6 +338,7 @@ load_from_swap (struct sup_page_table_entry *sup_page_table_entry)
 
   sup_page_table_entry->frame_table_entry = frame_table_entry;
   lock_release (&sup_page_table_entry->lock);
+  lock_release (&frame_table_entry->lock);
   return true;
 }
 

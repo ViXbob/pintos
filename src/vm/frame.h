@@ -1,6 +1,7 @@
 #ifndef VM_FRAME_H
 #define VM_FRAME_H
 #include "page.h"
+#include "threads/synch.h"
 #include <list.h>
 
 struct frame_table_entry
@@ -10,6 +11,7 @@ struct frame_table_entry
   struct sup_page_table_entry *
       sup_page_table_entry; /* Corresponding supplementary page table entry. */
   struct list_elem elem;    /* List element in frame table. */
+  struct lock lock;
 };
 
 /* Initialize frame table. */
