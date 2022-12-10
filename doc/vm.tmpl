@@ -197,10 +197,10 @@ interfered and evicted.
 >> gracefully handle attempted accesses to invalid virtual addresses?
 
 Yes. We do not load page before we actually use them.
-If page fault happen, we will check 
-whether it is that kernel thread access user memory during syscall 
-and then use `try_to_get_page` function to process.
-Else, the process will be exited immediately by `exit (-1)`.
+If page fault happen, we will check whether it is that kernel thread 
+access user memory during syscall and then use `try_to_get_page` 
+function to process. Else, the process will be exited immediately 
+by `exit (-1)`.
 
 ---- RATIONALE ----
 
