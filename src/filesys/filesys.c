@@ -8,6 +8,7 @@
 #include "filesys/directory.h"
 
 /* Partition that contains the file system. */
+/* represents the block device on which the file system is stored and is used to read and write data to and from the device.*/
 struct block *fs_device;
 
 static void do_format (void);
