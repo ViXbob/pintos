@@ -1,7 +1,10 @@
 #include "cache.h"
+#include "filesys.h"
 #include "devices/block.h"
 #include "lib/kernel/list.h"
 #include "threads/synch.h"
+#include "threads/malloc.h"
+#include <string.h>
 
 struct list cache;
 struct lock cache_lock;

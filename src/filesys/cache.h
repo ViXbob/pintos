@@ -2,6 +2,8 @@
 #define CACHE_H
 
 #include "devices/block.h"
+#include <stdbool.h>
+#include "threads/synch.h"
 
 #define CACHE_SIZE 64
 
