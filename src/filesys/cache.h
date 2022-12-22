@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #define CACHE_SIZE 64
+#define ENABLE_CACHE 1
 
 struct cache_entry
 {
@@ -22,5 +23,7 @@ void cache_init (void);
 void cache_read (block_sector_t, void *);
 void cache_write (block_sector_t, const void *);
 void cache_flush (void);
+void read_wrapper (struct block *block, block_sector_t sector, void *buffer);
+void write_wrapper (struct block *block, block_sector_t sector, const void *buffer);
 
 #endif
