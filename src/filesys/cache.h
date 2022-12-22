@@ -2,18 +2,20 @@
 #define CACHE_H
 
 #include "devices/block.h"
-#include <stdbool.h>
 #include "threads/synch.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 #define CACHE_SIZE 64
 
-struct cache_entry {
-  block_sector_t sector;
-  void *data;
-  bool dirty;
-  bool accessed;
-  struct lock lock;
-  struct list_elem elem;
+struct cache_entry
+{
+  bool accessed;                   /* Whether this entry is accessed or not. */
+  bool dirty;                      /* Whether this entry is dirty or not. */
+  int64_t time;                    /* Last access time. */
+  struct lock lock;                /*Cache entry lock. */
+  block_sector_t sector;           /* Corresponding block sector number. */
+  uint8_t data[BLOCK_SECTOR_SIZE]; /* Corresponding block data. */
 };
 
 void cache_init (void);
