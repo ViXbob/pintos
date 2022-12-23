@@ -429,6 +429,12 @@ inode_is_dir (const struct inode *inode)
 	return inode->data.is_dir;
 }
 
+bool
+inode_is_removed (const struct inode *inode)
+{
+  return inode->removed;
+}
+
 void
 load_indirect_inode_disk (block_sector_t sector,
                           struct indirect_inode_disk *indirect_inode_disk)

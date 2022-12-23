@@ -2,6 +2,7 @@
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
 #include <list.h>
 #include <stdio.h>
 #include <string.h>
@@ -36,7 +37,8 @@ dir_create (block_sector_t sector, size_t initial_size,
     return false;
   struct dir *dir = dir_open (inode_open (sector), true);
   struct dir *fa_dir = dir_open (inode_open (father_sector), on_creating);
-  bool success = dir_add_self_entry (dir) && dir_add_father_entry (dir, fa_dir);
+  bool success
+      = dir_add_self_entry (dir) && dir_add_father_entry (dir, fa_dir);
   free (dir);
   free (fa_dir);
   return success;
@@ -77,6 +79,82 @@ struct dir *
 dir_open_root (void)
 {
   return dir_open (inode_open (ROOT_DIR_SECTOR), false);
+}
+
+/* Open dir with path (exclude the last token), save the last into file_name */
+struct dir *
+dir_open_with_path (const char *name, char const **file_name)
+{
+  /* Empty file */
+  if (*name == '\0')
+    return NULL;
+  struct dir *dir = NULL;
+  struct inode *inode = NULL;
+  if (*name == '/')
+    {
+      /* Absolute path */
+      dir = dir_open_root ();
+      /* Skip all leading / */
+      /* Process cases like '///////...' */
+      while (*name && *name == '/')
+        ++name;
+    }
+  else
+    {
+      /* Relative path */
+      struct thread *cur = thread_current ();
+      /* Open the current working directory */
+      dir = !cur->cwd ? dir_open_root () : dir_reopen (cur->cwd);
+    }
+  /* Invalid, the starting directory is NULL */
+  if (!dir)
+    return NULL;
+
+  /* Loop through the path splited by '/' */
+  for (const char *next_token = name;; name = next_token)
+    {
+      /* Split the path by '/' */
+      while (*next_token && *next_token != '/')
+        ++next_token;
+      /* Reach the end, this is the last token */
+      if (*next_token == '\0')
+        {
+          /* Then save the last token into file_name */
+          *file_name = name;
+          break;
+        }
+      /* Split current name */
+      /* By utilizing C99 standard, which allows variable-length array */
+      char cur_name[next_token - name + 1];
+      memcpy (cur_name, name, next_token - name);
+      /* Ensure this is a string by adding '\0' at the end */
+      cur_name[next_token - name] = '\0';
+
+      struct dir *next_dir = NULL;
+      /* Failed to get file */
+      if (!dir_lookup (dir, cur_name, &inode)
+          || !(next_dir = dir_open (inode, false)))
+        {
+          /* Prevent memory leak */
+          dir_close (dir);
+          return NULL;
+        }
+      /* Close the current dir and move to the next */
+      dir_close (dir);
+      dir = next_dir;
+      /* Skip the '/'s */
+      while (*next_token && *next_token == '/')
+        ++next_token;
+    }
+  /* Cannot open a removed dir */
+  if (inode_is_removed (dir_get_inode (dir)))
+    {
+      /* Prevent memory leak */
+      dir_close (dir);
+      return NULL;
+    }
+
+  return dir;
 }
 
 /* Opens and returns a new directory for the same inode as DIR.
@@ -160,7 +238,8 @@ dir_lookup (const struct dir *dir, const char *name, struct inode **inode)
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
 bool
-dir_add (struct dir *dir, const char *name, block_sector_t inode_sector, bool create)
+dir_add (struct dir *dir, const char *name, block_sector_t inode_sector,
+         bool create)
 {
   struct dir_entry e;
   off_t ofs;
