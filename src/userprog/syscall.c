@@ -178,7 +178,7 @@ create (const char *file, unsigned initial_size)
 {
   bool result = false;
   lock_acquire (&filesys_lock);
-  result = filesys_create (file, initial_size);
+  result = filesys_create (file, initial_size, false);
   lock_release (&filesys_lock);
   return result;
 }

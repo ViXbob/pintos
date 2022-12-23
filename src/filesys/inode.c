@@ -45,9 +45,8 @@ struct inode_disk
       block_sector_t doubly_indirect_block;
     };
   };
-  off_t length; /* File size in bytes. */
-  bool is_dir;  /* is directory or not */
-
+  off_t length;   /* File size in bytes. */
+  bool is_dir;    /* is directory or not */
   unsigned magic; /* Magic number. */
 };
 
@@ -139,7 +138,7 @@ inode_init (void)
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create (block_sector_t sector, off_t length)
+inode_create (block_sector_t sector, off_t length, bool is_dir)
 {
   struct inode_disk *disk_inode = NULL;
   bool success = false;
@@ -155,6 +154,7 @@ inode_create (block_sector_t sector, off_t length)
     {
       size_t sectors = bytes_to_sectors (length);
       disk_inode->length = length;
+      disk_inode->is_dir = is_dir;
       disk_inode->magic = INODE_MAGIC;
       /* Recursively create inode. */
       if (recursive_create_inode (disk_inode, sectors))
@@ -420,6 +420,13 @@ off_t
 inode_length (const struct inode *inode)
 {
   return inode->data.length;
+}
+
+/* Returns whether this inode is a dir or not. */
+bool
+inode_is_dir (const struct inode *inode)
+{
+	return inode->data.is_dir;
 }
 
 void
