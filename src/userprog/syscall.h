@@ -1,6 +1,7 @@
 #ifndef USERPROG_SYSCALL_H
 #define USERPROG_SYSCALL_H
 #include "filesys/file.h"
+#include "filesys/directory.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
 
@@ -22,6 +23,7 @@ struct file_descriptor
 {
   int fd;
   struct file *file;
+	struct dir *dir;
   struct list_elem file_elem;
 };
 
