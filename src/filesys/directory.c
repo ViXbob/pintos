@@ -109,6 +109,8 @@ dir_open_with_path (const char *name, char const **file_name)
   /* Invalid, the starting directory is NULL */
   if (!dir)
     return NULL;
+	
+	char cur_name[NAME_MAX + 1];
 
   /* Loop through the path splited by '/' */
   for (const char *next_token = name;; name = next_token)
@@ -124,8 +126,6 @@ dir_open_with_path (const char *name, char const **file_name)
           break;
         }
       /* Split current name */
-      /* By utilizing C99 standard, which allows variable-length array */
-      char cur_name[next_token - name + 1];
       memcpy (cur_name, name, next_token - name);
       /* Ensure this is a string by adding '\0' at the end */
       cur_name[next_token - name] = '\0';
@@ -199,15 +199,19 @@ lookup (const struct dir *dir, const char *name, struct dir_entry *ep,
   ASSERT (name != NULL);
 
   for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
-       ofs += sizeof e)
-    if (e.in_use && !strcmp (name, e.name))
-      {
-        if (ep != NULL)
-          *ep = e;
-        if (ofsp != NULL)
-          *ofsp = ofs;
-        return true;
-      }
+       ofs += sizeof e) {
+				// if (e.in_use)
+				// 	printf ("name is %s\n", e.name);
+				if (e.in_use && !strcmp (name, e.name))
+					{
+						if (ep != NULL)
+							*ep = e;
+						if (ofsp != NULL)
+							*ofsp = ofs;
+						return true;
+					}
+			 }
+
   return false;
 }
 
@@ -301,7 +305,7 @@ dir_remove (struct dir *dir, const char *name)
     {
       struct dir *ch_dir = dir_open (inode, false);
       bool is_empty = dir_is_empty (ch_dir);
-      dir_close (dir);
+      dir_close (ch_dir);
       if (!is_empty)
         goto done;
     }
