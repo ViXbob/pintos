@@ -658,6 +658,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->during_syscall = false;
 #endif
 
+#ifdef FILESYS
+	t->cwd = NULL;
+#endif
+
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
