@@ -4,6 +4,7 @@
 #include "filesys/file.h"
 #include "filesys/free-map.h"
 #include "filesys/inode.h"
+#include "threads/thread.h"
 #include <debug.h>
 #include <stdio.h>
 #include <string.h>
@@ -65,13 +66,13 @@ filesys_create (const char *name, off_t initial_size, bool is_dir)
       success = (dir != NULL && free_map_allocate (1, &inode_sector)
                  && dir_create (inode_sector, initial_size,
                                 inode_get_inumber (dir_get_inode (dir)), false)
-                 && dir_add (dir, name, inode_sector, false));
+                 && dir_add (dir, file_name, inode_sector, false));
     }
   else
     {
       success = (dir != NULL && free_map_allocate (1, &inode_sector)
                  && inode_create (inode_sector, initial_size, is_dir)
-                 && dir_add (dir, name, inode_sector, false));
+                 && dir_add (dir, file_name, inode_sector, false));
     }
 
   if (!success && inode_sector != 0)
@@ -89,12 +90,22 @@ filesys_create (const char *name, off_t initial_size, bool is_dir)
 struct file *
 filesys_open (const char *name)
 {
-  struct dir *dir = dir_open_root ();
+  const char *file_name = NULL;
+  /* Open the directory that contains the file */
+  struct dir *dir = dir_open_with_path (name, &file_name);
   struct inode *inode = NULL;
 
-  if (dir != NULL)
-    dir_lookup (dir, name, &inode);
-  dir_close (dir);
+	if (dir == NULL)
+		return NULL;
+	
+	/* The name is not ending as "/". */
+	if (file_name != NULL && strlen (file_name) > 0)
+		{
+			dir_lookup (dir, file_name, &inode);
+			dir_close (dir);
+		}
+	else 
+		inode = dir_get_inode (dir);
 
   return file_open (inode);
 }
@@ -106,11 +117,38 @@ filesys_open (const char *name)
 bool
 filesys_remove (const char *name)
 {
-  struct dir *dir = dir_open_root ();
-  bool success = dir != NULL && dir_remove (dir, name);
+  const char *file_name = NULL;
+  /* Open the directory that contains the file */
+	/* Potential bug: the name is ending with "/". */
+  struct dir *dir = dir_open_with_path (name, &file_name);
+  bool success = dir != NULL && dir_remove (dir, file_name);
   dir_close (dir);
 
   return success;
+}
+
+/* Change current working directory to dir. */
+bool
+filesys_chdir (const char *dir_name)
+{
+  const char *file_name = NULL;
+  struct dir *dir = dir_open_with_path (dir_name, &file_name);
+  if (dir == NULL)
+    return false;
+  if (file_name != NULL && strlen (file_name) > 0)
+    {
+      struct inode *inode = NULL;
+      dir_lookup (dir, file_name, &inode);
+			dir_close (dir);
+			dir = dir_open (inode, false);
+			if (dir == NULL)
+				return false;
+    }
+	struct thread *t = thread_current ();
+	/* Close cwd and release memory. */
+	dir_close (t->cwd);
+	t->cwd = dir;
+	return true;
 }
 
 /* Formats the file system. */
