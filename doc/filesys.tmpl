@@ -30,13 +30,61 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+/* inode.c */
+#define INODE_SINGLE_INDIRECT_NUM 1
+#define INODE_DOUBLY_INDIRECT_NUM 1
+
+#define INODE_DIRECT_NUM                                                      \
+  (128 - 3 - INODE_SINGLE_INDIRECT_NUM - INODE_DOUBLY_INDIRECT_NUM)
+
+#define INDIRECT_PER_BLOCK (BLOCK_SECTOR_SIZE / sizeof (block_sector_t))
+
+/*
+    1. sector < start + BLOCK_NUM_LEVEL0
+    2. start + BLOCK_NUM_LEVEL0 <= sector < start + BLOCK_NUM_LEVEL1
+    3. start + BLOCK_NUM_LEVEL1 <= sector < start + BLOCK_NUM_LEVEL2
+    4. start + BLOCK_NUM_LEVEL2 <= sector
+*/
+#define BLOCK_NUM_LEVEL0 INODE_DIRECT_NUM
+#define BLOCK_NUM_LEVEL1 (BLOCK_NUM_LEVEL0 + INDIRECT_PER_BLOCK)
+#define BLOCK_NUM_LEVEL2                                                      \
+  (BLOCK_NUM_LEVEL1 + INDIRECT_PER_BLOCK * INDIRECT_PER_BLOCK)
+/* On-disk inode.
+   Must be exactly BLOCK_SECTOR_SIZE bytes long. */
+struct inode_disk
+{
+  union
+  {
+    block_sector_t blocks[INODE_DIRECT_NUM + 2];
+    struct
+    {
+      block_sector_t direct_blocks[INODE_DIRECT_NUM];
+      block_sector_t single_indirect_block;
+      block_sector_t doubly_indirect_block;
+    };
+  };
+  off_t length;   /* File size in bytes. */
+  bool is_dir;    /* is directory or not */
+  unsigned magic; /* Magic number. */
+};
+
+struct indirect_inode_disk
+{
+  block_sector_t blocks[INDIRECT_PER_BLOCK];
+};
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
+
+( 123 + 128 + 128*128 )*512 = 8.12 MB 
 
 ---- SYNCHRONIZATION ----
 
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
+
+if one process attempt to extend a file, it will use a syscall where 
+we have a lock when we use any syscall to implemented syscall atomicity.
+So it can promise that only one process can extend a file at the same time.
 
 >> A4: Suppose processes A and B both have file F open, both
 >> positioned at end-of-file.  If A reads and B writes F at the same
@@ -45,12 +93,22 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
+We make each syscall atomic, which means this `read` and `write` cannot 
+happen at the same time. And when we read a file, this file will be 
+marked `deny_to_write`. In fact, the real order of these two process 
+depend on the order of the process in the ready queue. So we can promise
+this race will never happen. 
+
 >> A5: Explain how your synchronization design provides "fairness".
 >> File access is "fair" if readers cannot indefinitely block writers
 >> or vice versa.  That is, many processes reading from a file cannot
 >> prevent forever another process from writing the file, and many
 >> processes writing to a file cannot prevent another process forever
 >> from reading the file.
+
+We use filesys_lock to implement synchronization. In fact, the real order 
+of these two process depend on the order of the process in the ready queue. 
+(First Access First Serve)
 
 ---- RATIONALE ----
 
@@ -59,6 +117,11 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> indirect blocks?  If not, why did you choose an alternative inode
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
+
+Yes, our inode structure is a multilevel index. We choose the 
+combination of direct, indirect, and doubly indirect blocks because 
+it allows the file system to efficiently store both small files 
+and large files using a single data structure.
 
                 SUBDIRECTORIES
                 ==============
@@ -69,10 +132,31 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+/* thread.h */
+struct thread
+{
+```
+struct dir *cwd; /* Current working dir */
+```
+}
+
+/* syscall.h */
+struct file_descriptor
+{
+  ```
+  struct dir *dir;
+  ```
+};
+
 ---- ALGORITHMS ----
 
 >> B2: Describe your code for traversing a user-specified path.  How
 >> do traversals of absolute and relative paths differ?
+
+When we get a user-specified path, we divide by '/' and open it for each. 
+And we use `bool dir_add_self_entry (struct dir *dir)` and 
+`bool dir_add_father_entry (struct dir *ch_dir, struct dir *fa_dir)`
+So we process the absolute and relative paths similarly.
 
 ---- SYNCHRONIZATION ----
 
@@ -81,15 +165,25 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> should succeed, as should only one of two simultaneous attempts to
 >> create a file with the same name, and so on.
 
+We use filesys_lock to implement synchronization. We make each syscall 
+atomic, which means these races cannot happen. 
+
 >> B5: Does your implementation allow a directory to be removed if it
 >> is open by a process or if it is in use as a process's current
 >> working directory?  If so, what happens to that process's future
 >> file system operations?  If not, how do you prevent it?
 
+We do not allow a directory to be removed while open.
+`dir_remove` occurs only if there is no file with the given NAME, 
+which means we will return false in `filesys_remove`.
+
 ---- RATIONALE ----
 
 >> B6: Explain why you chose to represent the current directory of a
 >> process the way you did.
+
+We use `struct dir *cwd` to represent the current directory of a process,
+which is easy to implement in our code.
 
                  BUFFER CACHE
                  ============
@@ -100,14 +194,38 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+/* cache.h */
+#define CACHE_SIZE 64
+#define ENABLE_CACHE 1
+struct cache_entry
+{
+  bool accessed;                   /* Whether this entry is accessed or not. */
+  bool dirty;                      /* Whether this entry is dirty or not. */
+  int64_t time;                    /* Last access time. */
+  struct lock lock;                /*Cache entry lock. */
+  block_sector_t sector;           /* Corresponding block sector number. */
+  uint8_t data[BLOCK_SECTOR_SIZE]; /* Corresponding block data. */
+};
+
+/* cache.c */
+struct cache_entry caches[CACHE_SIZE];
+struct lock cache_lock;
+extern struct block *fs_device;
+
 ---- ALGORITHMS ----
 
 >> C2: Describe how your cache replacement algorithm chooses a cache
 >> block to evict.
 
+Removes the least recently accessed cache entry from the cache. (LRU)
+
 >> C3: Describe your implementation of write-behind.
 
+Use function `cache_entry_flush` to write back to disk when a dirty.
+
 >> C4: Describe your implementation of read-ahead.
+
+We donot implement read-ahead. In fact, it is not necessary to implement.
 
 ---- SYNCHRONIZATION ----
 
@@ -115,13 +233,31 @@ Haoyu   He  <hehy@shanghaitech.edu.cn>
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
+Before we will process an entry in cache, we need to hold this
+lock in each entry.
+And in whole cache we also have `struct lock cache_lock;`,
+which is used to prevent the current process from interrupting. 
+
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
+
+Before we will process an entry in cache, we need to hold this
+lock in each entry.
+And in whole cache we also have `struct lock cache_lock;`,
+which is used to prevent the current process from interrupting. 
 
 ---- RATIONALE ----
 
 >> C7: Describe a file workload likely to benefit from buffer caching,
 >> and workloads likely to benefit from read-ahead and write-behind.
+
+Cache can be particularly useful for workloads that involve 
+repeatedly accessing the same data. In other word, the file workload 
+would benefit a lot from buffer caching.
+Read-ahead should be particularly useful for workloads that involve 
+sequentially reading large files.
+Write-behind shoulds be particularly useful for workloads that involve 
+frequently updating small files.
 
                SURVEY QUESTIONS
                ================
