@@ -97,28 +97,40 @@ byte_to_sector (const struct inode *inode, off_t pos)
   if (sector < BLOCK_NUM_LEVEL0)
     return inode->data.direct_blocks[sector];
 
+  void *begin_pointer = NULL;
+  struct indirect_inode_disk *indirect_inode_disk, *doubly_indirect_inode_disk;
+  begin_pointer = calloc (2, sizeof (struct indirect_inode_disk));
+
+  if (begin_pointer == NULL)
+    return -1;
+
+  indirect_inode_disk = begin_pointer;
+  doubly_indirect_inode_disk
+      = begin_pointer + sizeof (struct indirect_inode_disk);
+
+  block_sector_t result = -1;
+
   if (sector < BLOCK_NUM_LEVEL1)
     {
-      struct indirect_inode_disk indirect_inode_disk;
       load_indirect_inode_disk (inode->data.single_indirect_block,
-                                &indirect_inode_disk);
-      return indirect_inode_disk.blocks[sector - BLOCK_NUM_LEVEL0];
+                                indirect_inode_disk);
+      result = indirect_inode_disk->blocks[sector - BLOCK_NUM_LEVEL0];
+      goto done;
     }
 
   if (sector < BLOCK_NUM_LEVEL2)
     {
-      struct indirect_inode_disk indirect_inode_disk;
       load_indirect_inode_disk (inode->data.doubly_indirect_block,
-                                &indirect_inode_disk);
+                                indirect_inode_disk);
       sector -= BLOCK_NUM_LEVEL1;
-      struct indirect_inode_disk doubly_indirect_inode_disk;
       load_indirect_inode_disk (
-          indirect_inode_disk.blocks[sector / INDIRECT_PER_BLOCK],
-          &doubly_indirect_inode_disk);
-      return doubly_indirect_inode_disk.blocks[sector % INDIRECT_PER_BLOCK];
+          indirect_inode_disk->blocks[sector / INDIRECT_PER_BLOCK],
+          doubly_indirect_inode_disk);
+      result = doubly_indirect_inode_disk->blocks[sector % INDIRECT_PER_BLOCK];
     }
-
-  return -1;
+done:
+  free (begin_pointer);
+  return result;
 }
 
 /* List of open inodes, so that opening a single inode twice
@@ -426,7 +438,7 @@ inode_length (const struct inode *inode)
 bool
 inode_is_dir (const struct inode *inode)
 {
-	return inode->data.is_dir;
+  return inode->data.is_dir;
 }
 
 bool
@@ -445,40 +457,50 @@ load_indirect_inode_disk (block_sector_t sector,
 bool
 recursive_create_inode (struct inode_disk *inode_disk, size_t sectors)
 {
+  bool success = false;
+  void *begin_pointer = NULL;
+  struct indirect_inode_disk *indirect_inode_disk, *doubly_indirect_inode_disk;
+  begin_pointer = calloc (2, sizeof (struct indirect_inode_disk));
+  if (begin_pointer == NULL)
+    return false;
+  indirect_inode_disk = begin_pointer;
+  doubly_indirect_inode_disk
+      = begin_pointer + sizeof (struct indirect_inode_disk);
+
   if (sectors <= BLOCK_NUM_LEVEL0)
     {
       for (size_t i = 0; i < sectors; i++)
         if (!create_inode_one_sector (&inode_disk->direct_blocks[i], NULL))
-          return false;
+          goto done;
+      success = true;
     }
   else if (sectors <= BLOCK_NUM_LEVEL1)
     {
       if (!recursive_create_inode (inode_disk, BLOCK_NUM_LEVEL0))
-        return false;
+        goto done;
       sectors -= BLOCK_NUM_LEVEL0;
-      /* Create block for single indirect pointer. */
-      struct indirect_inode_disk indirect_inode_disk;
+
       if (!create_inode_one_sector (&inode_disk->single_indirect_block,
-                                    &indirect_inode_disk))
+                                    indirect_inode_disk))
         return false;
       for (size_t i = 0; i < sectors; i++)
-        if (!create_inode_one_sector (&indirect_inode_disk.blocks[i], NULL))
-          return false;
+        if (!create_inode_one_sector (&indirect_inode_disk->blocks[i], NULL))
+          goto done;
       /* Write back to disk. */
       write_wrapper (fs_device, inode_disk->single_indirect_block,
-                     &indirect_inode_disk);
+                     indirect_inode_disk);
+      success = true;
     }
   else if (sectors <= BLOCK_NUM_LEVEL2)
     {
       if (!recursive_create_inode (inode_disk, BLOCK_NUM_LEVEL1))
-        return false;
+        goto done;
       sectors -= BLOCK_NUM_LEVEL1;
-      /* Create block for doubly indirect pointer. */
-      struct indirect_inode_disk doubly_indirect_inode_disk;
+
       if (!create_inode_one_sector (&inode_disk->doubly_indirect_block,
-                                    &doubly_indirect_inode_disk))
-        return false;
-      struct indirect_inode_disk indirect_inode_disk;
+                                    doubly_indirect_inode_disk))
+        goto done;
+
       for (size_t single_indirect_index = 0;
            single_indirect_index < INDIRECT_PER_BLOCK && sectors > 0;
            single_indirect_index++)
@@ -486,28 +508,31 @@ recursive_create_inode (struct inode_disk *inode_disk, size_t sectors)
           size_t current_sectors
               = sectors < INDIRECT_PER_BLOCK ? sectors : INDIRECT_PER_BLOCK;
           if (!create_inode_one_sector (
-                  &doubly_indirect_inode_disk.blocks[single_indirect_index],
-                  &indirect_inode_disk))
-            return false;
+                  &doubly_indirect_inode_disk->blocks[single_indirect_index],
+                  indirect_inode_disk))
+            goto done;
           for (size_t i = 0; i < current_sectors; i++)
-            if (!create_inode_one_sector (&indirect_inode_disk.blocks[i],
+            if (!create_inode_one_sector (&indirect_inode_disk->blocks[i],
                                           NULL))
-              return false;
+              goto done;
           /* Write back. */
           write_wrapper (
               fs_device,
-              doubly_indirect_inode_disk.blocks[single_indirect_index],
-              &indirect_inode_disk);
+              doubly_indirect_inode_disk->blocks[single_indirect_index],
+              indirect_inode_disk);
           sectors -= current_sectors;
         }
       write_wrapper (fs_device, inode_disk->doubly_indirect_block,
-                     &doubly_indirect_inode_disk);
+                     doubly_indirect_inode_disk);
+      success = true;
     }
   else
     {
-      return false;
+      goto done;
     }
-  return true;
+done:
+  free (begin_pointer);
+  return success;
 }
 
 bool
@@ -534,6 +559,14 @@ create_inode_one_sector (block_sector_t *sector,
 void
 recursive_close_inode (struct inode_disk *inode_disk, size_t sectors)
 {
+  void *begin_pointer = NULL;
+  struct indirect_inode_disk *indirect_inode_disk, *doubly_indirect_inode_disk;
+  begin_pointer = calloc (2, sizeof (struct indirect_inode_disk));
+  if (begin_pointer == NULL)
+    return;
+  indirect_inode_disk = begin_pointer;
+  doubly_indirect_inode_disk
+      = begin_pointer + sizeof (struct indirect_inode_disk);
   if (sectors <= BLOCK_NUM_LEVEL0)
     {
       for (size_t i = 0; i < sectors; i++)
@@ -543,11 +576,10 @@ recursive_close_inode (struct inode_disk *inode_disk, size_t sectors)
     {
       recursive_close_inode (inode_disk, BLOCK_NUM_LEVEL0);
       sectors -= BLOCK_NUM_LEVEL0;
-      struct indirect_inode_disk indirect_inode_disk;
       load_indirect_inode_disk (inode_disk->single_indirect_block,
-                                &indirect_inode_disk);
+                                indirect_inode_disk);
       for (size_t i = 0; i < sectors; i++)
-        free_map_release (indirect_inode_disk.blocks[i], 1);
+        free_map_release (indirect_inode_disk->blocks[i], 1);
       free_map_release (inode_disk->single_indirect_block, 1);
     }
   else if (sectors <= BLOCK_NUM_LEVEL2)
@@ -555,10 +587,8 @@ recursive_close_inode (struct inode_disk *inode_disk, size_t sectors)
       recursive_close_inode (inode_disk, BLOCK_NUM_LEVEL1);
       sectors -= BLOCK_NUM_LEVEL1;
       /* Create block for doubly indirect pointer. */
-      struct indirect_inode_disk doubly_indirect_inode_disk;
       load_indirect_inode_disk (inode_disk->doubly_indirect_block,
-                                &doubly_indirect_inode_disk);
-      struct indirect_inode_disk indirect_inode_disk;
+                                doubly_indirect_inode_disk);
       for (size_t single_indirect_index = 0;
            single_indirect_index < INDIRECT_PER_BLOCK && sectors > 0;
            single_indirect_index++)
@@ -566,12 +596,12 @@ recursive_close_inode (struct inode_disk *inode_disk, size_t sectors)
           size_t current_sectors
               = sectors < INDIRECT_PER_BLOCK ? sectors : INDIRECT_PER_BLOCK;
           load_indirect_inode_disk (
-              doubly_indirect_inode_disk.blocks[single_indirect_index],
-              &indirect_inode_disk);
+              doubly_indirect_inode_disk->blocks[single_indirect_index],
+              indirect_inode_disk);
           for (size_t i = 0; i < current_sectors; i++)
-            free_map_release (indirect_inode_disk.blocks[i], 1);
+            free_map_release (indirect_inode_disk->blocks[i], 1);
           free_map_release (
-              doubly_indirect_inode_disk.blocks[single_indirect_index], 1);
+              doubly_indirect_inode_disk->blocks[single_indirect_index], 1);
           sectors -= current_sectors;
         }
       free_map_release (inode_disk->doubly_indirect_block, 1);
@@ -580,4 +610,5 @@ recursive_close_inode (struct inode_disk *inode_disk, size_t sectors)
     {
       ASSERT (false);
     }
+  free (begin_pointer);
 }
