@@ -139,6 +139,11 @@ struct thread
   sup_page_table sup_page_table;
   struct list mmap_list;
 #endif
+
+#ifdef FILESYS
+	struct dir *cwd; /* Current working dir */
+#endif
+
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
 };

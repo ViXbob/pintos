@@ -1,3 +1,5 @@
 build
 bochsrc.txt
 bochsout.txt
+*.json
+make_grade_commands

@@ -3,6 +3,8 @@
 #include "devices/shutdown.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/directory.h"
+#include "filesys/inode.h"
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
 #include "threads/palloc.h"
@@ -98,6 +100,14 @@ static syscall_handler_func syscall_mmap;
 static syscall_handler_func syscall_munmap;
 #endif
 
+#ifdef FILESYS
+static syscall_handler_func syscall_chdir;
+static syscall_handler_func syscall_mkdir;
+static syscall_handler_func syscall_readdir;
+static syscall_handler_func syscall_isdir;
+static syscall_handler_func syscall_inumber;
+#endif
+
 static int get_user_byte (const uint8_t *uaddr);
 // static bool put_user_byte (uint8_t *udst, uint8_t byte);
 static bool user_memory_check (void *uaddr, int bytes);
@@ -178,7 +188,7 @@ create (const char *file, unsigned initial_size)
 {
   bool result = false;
   lock_acquire (&filesys_lock);
-  result = filesys_create (file, initial_size);
+  result = filesys_create (file, initial_size, false);
   lock_release (&filesys_lock);
   return result;
 }
@@ -216,6 +226,9 @@ open (const char *file_name)
       lock_acquire (&filesys_lock);
       file_opened->fd = new_fd;
       file_opened->file = file;
+			file_opened->dir = NULL;
+			if (inode_is_dir (file_get_inode (file)))
+				file_opened->dir = dir_open (file_get_inode (file), false);
       list_push_back (&thread_current ()->file_list, &file_opened->file_elem);
       lock_release (&filesys_lock);
       return file_opened->fd;
@@ -284,12 +297,14 @@ write (int fd, const void *buffer, unsigned length)
       int result = -1;
       lock_acquire (&filesys_lock);
       f = find_file_with_fd (&thread_current ()->file_list, fd);
-
       if (f == NULL)
         {
           lock_release (&filesys_lock);
           exit (-1);
         }
+			/* You should not write to a directory. */
+			if (inode_is_dir (file_get_inode (f->file)))
+				exit (-1);
       result = file_write (f->file, buffer, length);
       lock_release (&filesys_lock);
       return result;
@@ -347,8 +362,14 @@ close (int fd)
       int old_fd = f->fd;
       recycle_fd (old_fd);
       list_remove (&f->file_elem);
+
+			/* close file. */
       file_close (f->file);
-      // palloc_free_page (f);
+
+			/* close dir. */
+			dir_close (f->dir);
+
+			/* free allocated memory. */
       free (f);
       lock_release (&filesys_lock);
     }
@@ -464,13 +485,13 @@ free_mmap_entry (struct mmap_entry *mmap_entry)
                 break;
               }
             case IN_SWAP:
-                PANIC ("mmap memory should not in swap.");
+              PANIC ("mmap memory should not in swap.");
             case IN_FILESYS:
-                break;
+              break;
             case INVALID:
-                PANIC ("Sup page table entry should not be invalid.");
+              PANIC ("Sup page table entry should not be invalid.");
             default:
-                NOT_REACHED ();
+              NOT_REACHED ();
             }
 
           /* Delete it from supplementary page table. */
@@ -562,6 +583,81 @@ munmap (mapid_t mapping)
           return;
         }
     }
+}
+#endif
+
+#ifdef FILESYS
+bool
+chdir (const char *dir)
+{
+  lock_acquire (&filesys_lock);
+  bool result = filesys_chdir (dir);
+  lock_release (&filesys_lock);
+  return result;
+}
+
+bool
+mkdir (const char *dir)
+{
+  lock_acquire (&filesys_lock);
+  bool result = filesys_create (dir, 0, true);
+  lock_release (&filesys_lock);
+  return result;
+}
+
+bool
+readdir (int fd, char name[READDIR_MAX_LEN + 1])
+{
+  struct file_descriptor *f = NULL;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
+  if (f == NULL)
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
+	/* You should record the pos of dir. */
+  struct dir *dir = f->dir;
+	bool result = (dir != NULL) && dir_readdir (dir, name);
+  lock_release (&filesys_lock);
+  return result;
+}
+
+bool
+isdir (int fd)
+{
+  struct file_descriptor *f = NULL;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
+  if (f == NULL)
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
+	
+  // struct dir *dir = dir_open (file_get_inode (f->file), false);
+	struct inode *inode = file_get_inode (f->file);
+	bool result = (inode != NULL) && inode_is_dir (inode);
+  lock_release (&filesys_lock);
+  return result;
+}
+
+int
+inumber (int fd)
+{
+  struct file_descriptor *f = NULL;
+  lock_acquire (&filesys_lock);
+  f = find_file_with_fd (&thread_current ()->file_list, fd);
+  if (f == NULL)
+    {
+      lock_release (&filesys_lock);
+      exit (-1);
+    }
+	
+	struct inode *inode = file_get_inode (f->file);
+	int result = inode_get_inumber (inode);
+  lock_release (&filesys_lock);
+  return result;
 }
 #endif
 
@@ -739,6 +835,66 @@ syscall_munmap (struct intr_frame *f)
 }
 #endif
 
+#ifdef FILESYS
+static void
+syscall_chdir (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp + 4, 4))
+    exit (-1);
+
+  char *dir = *((char **)(f->esp + 4));
+
+  f->eax = chdir (dir);
+}
+
+static void
+syscall_mkdir (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp + 4, 4))
+    exit (-1);
+
+  char *dir = *((char **)(f->esp + 4));
+
+  f->eax = mkdir (dir);
+}
+
+typedef char READDIR_NAME[READDIR_MAX_LEN + 1];
+
+static void
+syscall_readdir (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp + 4, 8))
+    exit (-1);
+
+  int fd = *((int *)(f->esp + 4));
+  char *name = *((char **)(f->esp + 8));
+
+  f->eax = readdir (fd, name);
+}
+
+static void
+syscall_isdir (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp + 4, 4))
+    exit (-1);
+
+  int fd = *((int *)(f->esp + 4));
+
+  f->eax = isdir (fd);
+}
+
+static void
+syscall_inumber (struct intr_frame *f)
+{
+  if (!user_memory_check (f->esp + 4, 4))
+    exit (-1);
+
+  int fd = *((int *)(f->esp + 4));
+
+  f->eax = inumber (fd);
+}
+#endif
+
 void
 syscall_init (void)
 {
@@ -762,6 +918,14 @@ syscall_init (void)
   syscall_handlers[SYS_MUNMAP] = &syscall_munmap;
 
   init_mmapid_pool ();
+#endif
+
+#ifdef FILESYS
+  syscall_handlers[SYS_CHDIR] = &syscall_chdir;
+  syscall_handlers[SYS_MKDIR] = &syscall_mkdir;
+  syscall_handlers[SYS_READDIR] = &syscall_readdir;
+  syscall_handlers[SYS_ISDIR] = &syscall_isdir;
+  syscall_handlers[SYS_INUMBER] = &syscall_inumber;
 #endif
   // init filesys_lock
   lock_init (&filesys_lock);
@@ -796,7 +960,7 @@ get_user_byte (const uint8_t *uaddr)
     return -1;
 
   int result;
-  asm("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
+  asm ("movl $1f, %0; movzbl %1, %0; 1:" : "=&a"(result) : "m"(*uaddr));
   return result;
 }
 
