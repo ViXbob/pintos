@@ -17,7 +17,7 @@ struct inode;
 bool dir_create (block_sector_t sector, size_t initial_size, block_sector_t father_sector, bool on_creating);
 struct dir *dir_open (struct inode * inode, bool create);
 struct dir *dir_open_root (void);
-struct dir *dir_open_with_path (const char *name, char const **file_name);
+struct dir *dir_open_with_path (const char *name, const char **file_name);
 struct dir *dir_reopen (struct dir *);
 void dir_close (struct dir *);
 struct inode *dir_get_inode (struct dir *);

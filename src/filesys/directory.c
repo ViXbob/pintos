@@ -81,75 +81,76 @@ dir_open_root (void)
   return dir_open (inode_open (ROOT_DIR_SECTOR), false);
 }
 
-/* Open dir with path (exclude the last token), save the last into file_name */
+/* Open a directory with path (exclude the last token),
+ * save the last into file_name and return dir without
+ * the last token. Ignore the ending forwad slash. */
 struct dir *
-dir_open_with_path (const char *name, char const **file_name)
+dir_open_with_path (const char *name, const char **file_name)
 {
-  /* Empty file */
-  if (*name == '\0')
+  if (strlen (name) <= 0)
     return NULL;
+
   struct dir *dir = NULL;
   struct inode *inode = NULL;
   if (*name == '/')
     {
-      /* Absolute path */
+      /* Absolute path. */
       dir = dir_open_root ();
-      /* Skip all leading / */
-      /* Process cases like '///////...' */
-      while (*name && *name == '/')
+      while (*name != '\0' && *name == '/')
         ++name;
     }
   else
     {
-      /* Relative path */
-      struct thread *cur = thread_current ();
-      /* Open the current working directory */
-      dir = !cur->cwd ? dir_open_root () : dir_reopen (cur->cwd);
+      /* Relative path. */
+      struct thread *t = thread_current ();
+      dir = !t->cwd ? dir_open_root () : dir_reopen (t->cwd);
     }
-  /* Invalid, the starting directory is NULL */
+
   if (!dir)
     return NULL;
-	
-	char cur_name[NAME_MAX + 1];
 
-  /* Loop through the path splited by '/' */
+	int length = strlen (name);
+  const char *end = name + length;
+
+  /* Ignore the ending forward slash. */
+  while (length > 0 && *(end - 1) == '/')
+    length--, end--;
+
+  char cur_name[NAME_MAX + 1];
+
   for (const char *next_token = name;; name = next_token)
     {
-      /* Split the path by '/' */
-      while (*next_token && *next_token != '/')
+      while (next_token != end && *next_token != '/')
         ++next_token;
-      /* Reach the end, this is the last token */
-      if (*next_token == '\0')
+
+      if (next_token == end)
         {
-          /* Then save the last token into file_name */
           *file_name = name;
           break;
         }
-      /* Split current name */
+
       memcpy (cur_name, name, next_token - name);
-      /* Ensure this is a string by adding '\0' at the end */
       cur_name[next_token - name] = '\0';
 
       struct dir *next_dir = NULL;
-      /* Failed to get file */
       if (!dir_lookup (dir, cur_name, &inode)
           || !(next_dir = dir_open (inode, false)))
         {
-          /* Prevent memory leak */
           dir_close (dir);
           return NULL;
         }
-      /* Close the current dir and move to the next */
+			
       dir_close (dir);
       dir = next_dir;
-      /* Skip the '/'s */
-      while (*next_token && *next_token == '/')
+
+      /* Skip the forward slashes. */
+      while (next_token != end && *next_token == '/')
         ++next_token;
     }
+	
   /* Cannot open a removed dir */
   if (inode_is_removed (dir_get_inode (dir)))
     {
-      /* Prevent memory leak */
       dir_close (dir);
       return NULL;
     }
@@ -199,18 +200,19 @@ lookup (const struct dir *dir, const char *name, struct dir_entry *ep,
   ASSERT (name != NULL);
 
   for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
-       ofs += sizeof e) {
-				// if (e.in_use)
-				// 	printf ("name is %s\n", e.name);
-				if (e.in_use && !strcmp (name, e.name))
-					{
-						if (ep != NULL)
-							*ep = e;
-						if (ofsp != NULL)
-							*ofsp = ofs;
-						return true;
-					}
-			 }
+       ofs += sizeof e)
+    {
+      // if (e.in_use)
+      // 	printf ("name is %s\n", e.name);
+      if (e.in_use && !strcmp (name, e.name))
+        {
+          if (ep != NULL)
+            *ep = e;
+          if (ofsp != NULL)
+            *ofsp = ofs;
+          return true;
+        }
+    }
 
   return false;
 }
